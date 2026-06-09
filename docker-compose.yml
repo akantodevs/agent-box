@@ -1,0 +1,32 @@
+services:
+  agent:
+    build:
+      context: agent-box
+      dockerfile: Dockerfile
+    # Pin the built image name/tag. Without this, Compose auto-names it
+    # "<project>-<service>" (i.e. "agent-box-agent"), which is confusing next to
+    # the "agent-box" container name.
+    image: agent-box:latest
+    container_name: agent-box
+
+    ports:
+      - 7681:7681 # Port for ttyd web terminal
+
+    environment:
+      # TTYD credentials
+      TTYD_USER: "admin"
+      TTYD_PASSWORD: "admin"
+
+    volumes:
+      # We must mount docker socket to allow the agent to run docker commands on the host
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # To avoid authenticating claude code every time we start the container, we mount the claude code credentials as a secret
+      - ./.claude_session/.claude_credentials.json:/home/claude/.claude/.credentials.json:z
+
+      # We mount the current directory to /repo in the container, so that the agent can perform development on itself
+      # For projects that uses the agent container, the codebase will be mounted here instead
+      - ./:/repo:z
+
+      # Persist Claude Code session transcripts so conversations survive container rebuilds/recreation.
+      - ./.claude_session/projects:/home/claude/.claude/projects:z
