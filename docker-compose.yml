@@ -15,9 +15,12 @@ services:
       - 7681:7681 # Port for ttyd web terminal
 
     environment:
-      # TTYD credentials
+      # TTYD credential
       TTYD_USER: "admin"
       TTYD_PASSWORD: "admin"
+
+      # Set model Claude Code launches with (sonnet/opus/fable/..)
+      CLAUDE_MODEL: "fable"
 
     volumes:
       # We must mount docker socket to allow the agent to run docker commands on the host

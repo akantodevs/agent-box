@@ -16,7 +16,8 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings
 RUN echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 RUN apt-get update && apt-get install -y docker-ce-cli && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI
+# Install Claude Code CLI (image owns the version; update by rebuilding, not in-container)
+ENV DISABLE_AUTOUPDATER=1
 RUN npm install -g @anthropic-ai/claude-code
 
 # Create non-root user for Claude Code
