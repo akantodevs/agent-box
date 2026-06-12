@@ -57,10 +57,10 @@ RUN chmod +x /opt/agent-box/scripts/*.sh
 # keeping it current after image rebuilds even when the volume already has content.
 COPY CLAUDE.md /opt/agent-box/CLAUDE.md
 
-# Healthy = ttyd answers HTTP on 7681. No -f flag: ttyd uses basic auth, so an
+# Healthy = ttyd answers HTTP on 8081. No -f flag: ttyd uses basic auth, so an
 # unauthenticated probe gets 401 — any HTTP response means the terminal is up.
 # Generous start period: ep.sh installs plugins before launching ttyd.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
-    CMD curl -s -o /dev/null http://localhost:7681 || exit 1
+    CMD curl -s -o /dev/null http://localhost:8081 || exit 1
 
 ENTRYPOINT ["/ep.sh"]

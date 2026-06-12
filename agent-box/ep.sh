@@ -107,9 +107,9 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-opus}"
 
 # -m 1 limits ttyd to a single concurrent client so only one `claude --continue`
 # ever runs against the persisted conversation (two would corrupt the transcript).
-ttyd -p 7681 -m 1 -c "${TTYD_USER}:${TTYD_PASSWORD}" -t "titleFixed=Agent console" -W -T xterm-256color su - claude -c "cd /repo && CLAUDE_MODEL='${CLAUDE_MODEL}' /opt/agent-box/scripts/start_claude.sh" &
+ttyd -p 8081 -m 1 -c "${TTYD_USER}:${TTYD_PASSWORD}" -t "titleFixed=Agent console" -W -T xterm-256color su - claude -c "cd /repo && CLAUDE_MODEL='${CLAUDE_MODEL}' /opt/agent-box/scripts/start_claude.sh" &
 
-echo "Container ready. Access Claude Code at http://localhost:7681 with username '${TTYD_USER}' and password '${TTYD_PASSWORD}'." > /var/log/container.log
+echo "Container ready. Access Claude Code at http://localhost:8081 with username '${TTYD_USER}' and password '${TTYD_PASSWORD}'." > /var/log/container.log
 chown claude:claude /var/log/container.log
 
 tail -f /var/log/container.log

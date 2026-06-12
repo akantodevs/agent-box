@@ -32,7 +32,7 @@ From zero to a working agent in about a minute:
        init: true
 
        ports:
-         - 7681:7681
+         - 8081:8081
        environment:
          TTYD_USER: "admin"
          TTYD_PASSWORD: "admin"
@@ -52,7 +52,7 @@ From zero to a working agent in about a minute:
    docker compose up -d
    ```
 
-   Open **http://localhost:7681** (login `admin` / `admin`), complete the one-time
+   Open **http://localhost:8081** (login `admin` / `admin`), complete the one-time
    Claude login, and start delegating. The agent can take it from here: scaffold code
    in `/repo`, add new services to this same compose file, and build/start/test them
    itself through the mounted Docker socket.
@@ -65,7 +65,7 @@ For the full story (building locally, configuration, how it works), read on.
 
 - **Claude Code in a box** — runs as the non-root `claude` user inside a Debian
   container, accessed from your browser via a [ttyd](https://github.com/tsl0922/ttyd)
-  web terminal on port **7681**.
+  web terminal on port **8081**.
 - **Whole-stack control** — the host Docker socket is mounted in, so the agent drives the
   entire Compose stack (`docker compose ps / restart / logs / exec`) from inside the box.
 - **Persistent sessions** — credentials, settings, and conversation transcripts live in
@@ -118,7 +118,7 @@ docker compose logs -f agent
 
 ### 2. Open the web terminal and log in
 
-Browse to **http://localhost:7681** and authenticate to ttyd with the credentials from
+Browse to **http://localhost:8081** and authenticate to ttyd with the credentials from
 `docker-compose.yml` (defaults: **`admin` / `admin`** — change these for anything beyond
 local use).
 
@@ -150,7 +150,7 @@ services:
     container_name: agent-box
     init: true
     ports:
-      - 7681:7681
+      - 8081:8081
     environment:
       TTYD_USER: "admin"
       TTYD_PASSWORD: "admin"
@@ -223,8 +223,8 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 
 | Piece                                     | Role                                                                                                                                                                                                                                                                                                                                                                                      |
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docker-compose.yml`                      | Defines the `agent` service: build, the `agent-box:latest` image, port `7681`, env vars, and the volume mounts. The `name:` field pins the Compose project name.                                                                                                                                                                                                                          |
-| `agent-box/Dockerfile`                    | Builds the image: Debian + Node.js + Claude Code CLI + docker CLI + ttyd + Playwright MCP with headless Chromium, plus everyday CLI tools (`ps`/`pkill`, `jq`, `less`, `nc`, `dig`, `unzip`, `wget`, `tree`, Python with pip/venv, ...), and creates the non-root `claude` user. Ships a healthcheck on port 7681. The Claude Code auto-updater is disabled — the image owns the version. |
+| `docker-compose.yml`                      | Defines the `agent` service: build, the `agent-box:latest` image, port `8081`, env vars, and the volume mounts. The `name:` field pins the Compose project name.                                                                                                                                                                                                                          |
+| `agent-box/Dockerfile`                    | Builds the image: Debian + Node.js + Claude Code CLI + docker CLI + ttyd + Playwright MCP with headless Chromium, plus everyday CLI tools (`ps`/`pkill`, `jq`, `less`, `nc`, `dig`, `unzip`, `wget`, `tree`, Python with pip/venv, ...), and creates the non-root `claude` user. Ships a healthcheck on port 8081. The Claude Code auto-updater is disabled — the image owns the version. |
 | `agent-box/ep.sh`                         | Entrypoint (runs as **root**): fixes ownership, seeds first-run config, grants `claude` access to the Docker socket, installs plugins, then launches ttyd.                                                                                                                                                                                                                                |
 | `agent-box/scripts/start_claude.sh`       | Launched per ttyd connection; runs `claude --model "$CLAUDE_MODEL" --continue` if a transcript exists, else starts fresh.                                                                                                                                                                                                                                                                 |
 | `agent-box/scripts/install_plugins.sh`    | Idempotently installs **and enables** the plugins from `plugins.txt`.                                                                                                                                                                                                                                                                                                                     |
@@ -242,7 +242,7 @@ only sets the default when no `statusLine` is configured, so your changes stick.
    socket's GID (it never `chmod`s the socket itself, which would alter the host's
    inode).
 3. It installs and enables plugins from `plugins.txt` as the `claude` user (idempotent).
-4. It launches **ttyd** on port `7681`, which runs `start_claude.sh` as `claude` on each
+4. It launches **ttyd** on port `8081`, which runs `start_claude.sh` as `claude` on each
    connection. ttyd is limited to a single client (`-m 1`) so only one
    `claude --continue` ever touches the transcript.
 
@@ -287,7 +287,7 @@ This is a development convenience, not a sandbox. Treat it accordingly:
 - **Unrestricted permissions.** Claude Code runs with `--dangerously-skip-permissions`;
   it will not prompt before running commands.
 - **Change the ttyd credentials.** `TTYD_USER` / `TTYD_PASSWORD` default to `admin` /
-  `admin` in `docker-compose.yml`. Change them (and don't expose port 7681 publicly)
+  `admin` in `docker-compose.yml`. Change them (and don't expose port 8081 publicly)
   before using this anywhere but localhost.
 - The `claude-data` volume holds your live credentials and conversation history. Remove
   it (`docker volume rm`) only if you intend to wipe the login and all transcripts.
