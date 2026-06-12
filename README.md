@@ -5,9 +5,57 @@ Code as the `agent` service in a Docker Compose stack, exposes it through a web 
 and mounts the host Docker socket so the agent can build, run, and test the *other*
 services in the same stack.
 
-`agent-box` is a **reusable template**: drop it alongside a real project, mount that
-project at `/repo`, and you get an autonomous coding agent that can develop the project —
-and its sibling services — from the inside.
+`agent-box` is **reusable**: include the prebuilt image (or this directory) in a real
+project's compose file, mount that project at `/repo`, and you get an autonomous coding
+agent that can develop the project — and its sibling services — from the inside.
+
+---
+
+## Ultra quick getting started
+
+From zero to a working agent in about a minute:
+
+1. **Make sure Docker is installed** (with Compose v2: `docker compose version`).
+
+2. **Create `docker-compose.yml`** in your project directory (empty dirs work too —
+   the agent can bootstrap a project from scratch). Use the filename
+   `docker-compose.yml` exactly: the agent is instructed to operate on
+   `/repo/docker-compose.yml`.
+
+   ```yaml
+   name: my-project   # Compose project name; also used by the agent inside the box
+
+   services:
+     agent:
+       image: ghcr.io/akantodevs/agent-box:latest
+       container_name: agent-box
+       ports:
+         - 7681:7681
+       environment:
+         TTYD_USER: "admin"
+         TTYD_PASSWORD: "admin"
+         CLAUDE_MODEL: "opus"
+       volumes:
+         - /var/run/docker.sock:/var/run/docker.sock
+         - ./:/repo:z
+         - claude-data:/home/claude/.claude
+
+   volumes:
+     claude-data:
+   ```
+
+3. **Run it:**
+
+   ```bash
+   docker compose up -d
+   ```
+
+   Open **http://localhost:7681** (login `admin` / `admin`), complete the one-time
+   Claude login, and start delegating. The agent can take it from here: scaffold code
+   in `/repo`, add new services to this same compose file, and build/start/test them
+   itself through the mounted Docker socket.
+
+For the full story (building locally, configuration, how it works), read on.
 
 ---
 
@@ -18,12 +66,18 @@ and its sibling services — from the inside.
   web terminal on port **7681**.
 - **Whole-stack control** — the host Docker socket is mounted in, so the agent drives the
   entire Compose stack (`docker compose ps / restart / logs / exec`) from inside the box.
-- **Persistent sessions** — your conversation survives container restarts and rebuilds;
-  on reconnect the agent resumes exactly where it left off (`claude --continue`).
+- **Persistent sessions** — credentials, settings, and conversation transcripts live in
+  the `claude-data` named volume, so they survive container restarts and rebuilds; on
+  reconnect the agent resumes exactly where it left off (`claude --continue`).
+- **Configurable model** — set the `CLAUDE_MODEL` env var (defaults to `opus`) to pick
+  the model Claude Code launches with.
 - **Plugins preinstalled** — anything listed in `agent-box/plugins.txt` (default:
-  `superpowers`) is installed idempotently on every start.
+  `superpowers`) is installed *and enabled* idempotently on every start.
 - **Operating manual baked in** — `agent-box/CLAUDE.md` ships as the agent's global
   instructions, including the guardrails that keep it inside this stack.
+- **Published image** — every push to `main` builds and pushes
+  `ghcr.io/akantodevs/agent-box` via GitHub Actions, so consuming projects don't need a
+  local checkout of this repo.
 
 ---
 
@@ -39,40 +93,10 @@ and its sibling services — from the inside.
 
 ## Getting started
 
-> These steps assume you're starting the box for the first time. Run them from the
-> repository root (the directory containing `docker-compose.yml`).
+> These steps assume you're starting the box for the first time, from the repository
+> root (the directory containing `docker-compose.yml`).
 
-### 1. Set the project name
-
-Edit `.env` and set the Compose project name. For a real project, use that project's
-name — it keeps the host and the in-container agent pointed at the **same** stack.
-
-```env
-# .env
-COMPOSE_PROJECT_NAME=agent-box
-```
-
-### 2. Create the credentials placeholder  ⚠️ required
-
-The compose file bind-mounts a single file for Claude Code credentials:
-
-```
-./.claude_session/.claude_credentials.json  ->  /home/claude/.claude/.credentials.json
-```
-
-Docker requires the source to **exist before the first `up`**. If it doesn't, Docker
-silently creates a *directory* there and your login can never persist. Create an empty
-file up front:
-
-```bash
-mkdir -p .claude_session/projects
-touch .claude_session/.claude_credentials.json
-```
-
-> `.claude_session/` is gitignored (it's runtime state, not source), so a fresh clone
-> won't have it — this step is needed on every new checkout.
-
-### 3. Build and start the box
+### 1. Build and start the box
 
 ```bash
 docker compose up --build -d
@@ -85,19 +109,18 @@ come up:
 docker compose logs -f agent
 ```
 
-### 4. Open the web terminal and log in
+### 2. Open the web terminal and log in
 
 Browse to **http://localhost:7681** and authenticate to ttyd with the credentials from
 `docker-compose.yml` (defaults: **`admin` / `admin`** — change these for anything beyond
 local use).
 
-On first run, the mounted credentials file is empty, so Claude Code will prompt you to
-**log in**. Follow the prompt in the terminal (it gives you a URL to open in your
-browser; authorize, then paste the code back). The credentials are written through the
-mount to `.claude_session/.claude_credentials.json`, so you won't be asked again on
-future starts.
+On first run, Claude Code will prompt you to **log in**. Follow the prompt in the
+terminal (it gives you a URL to open in your browser; authorize, then paste the code
+back). The credentials are stored in the `claude-data` named volume, so you won't be
+asked again on future starts — even after image rebuilds.
 
-### 5. You're in
+### 3. You're in
 
 The agent starts in `/repo` with the session resumed. From here it can edit code, and run
 `docker compose -f /repo/docker-compose.yml ...` to control the rest of the stack.
@@ -106,17 +129,77 @@ The agent starts in `/repo` with the session resumed. From here it can edit code
 
 ## Using it for a real project
 
-`agent-box` develops whatever is mounted at `/repo`. To use it on a real project:
+`agent-box` develops whatever is mounted at `/repo`. There are two ways to include it:
 
-1. Place the `agent-box/` directory, `docker-compose.yml`, `.env`, and `.gitignore`
-   alongside (or inside) your project so your project's code is what gets mounted at
-   `/repo` (see the `./:/repo` volume).
-2. Set `COMPOSE_PROJECT_NAME` in `.env` to your project's name.
-3. Add your project's own services to `docker-compose.yml`. By convention, each service
-   mounts its own subdirectory, `/repo/<service>` — so the agent editing `/repo/api`
-   changes the code the `api` service runs.
-4. Reach sibling services over the Compose network by **service name as hostname** (e.g.
+### Option A — prebuilt image from ghcr.io (recommended)
+
+Add the `agent` service to your project's `docker-compose.yml`, pulling the published
+image instead of building locally:
+
+```yaml
+services:
+  agent:
+    image: ghcr.io/akantodevs/agent-box:latest
+    container_name: agent-box
+    ports:
+      - 7681:7681
+    environment:
+      TTYD_USER: "admin"
+      TTYD_PASSWORD: "admin"
+      CLAUDE_MODEL: "opus"     # optional; opus/sonnet/fable or a full model id
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/repo:z
+      - claude-data:/home/claude/.claude
+
+volumes:
+  claude-data:
+```
+
+Notes:
+
+- `latest` is resolved at pull time — update with `docker compose pull agent`. A
+  `sha-<commit>` tag is also published per build if you want to pin.
+- The `claude-data` volume is **project-scoped** (`<project>_claude-data`), so each
+  project logs in once and keeps its own conversation history. Don't share it between
+  projects: transcripts are keyed to `/repo`, so a shared volume would make
+  `claude --continue` resume another project's conversation.
+- `container_name` and the host port are fixed, so only one agent-box runs at a time;
+  change both if you need two projects up simultaneously.
+
+### Option B — build from a local checkout
+
+Point `build.context` at this repo instead of using `image:`:
+
+```yaml
+    build:
+      context: ../agent-box/agent-box   # path to agent-box/ in your checkout
+      dockerfile: Dockerfile
+```
+
+Everything else (ports, environment, volumes) is the same as Option A.
+
+### Wiring up your services
+
+1. Add your project's own services to the same `docker-compose.yml`. By convention, each
+   service mounts its own subdirectory, `/repo/<service>` — so the agent editing
+   `/repo/api` changes the code the `api` service runs.
+2. Reach sibling services over the Compose network by **service name as hostname** (e.g.
    `http://api:8000`, `db:5432`), using each service's *internal* port.
+3. Set a `name:` at the top of the compose file. The agent runs
+   `docker compose -f /repo/docker-compose.yml ...`, which reads `name:` from the file —
+   so host and agent always target the same stack, no env vars needed.
+
+---
+
+## Configuration
+
+All knobs are environment variables on the `agent` service in `docker-compose.yml`:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `TTYD_USER` / `TTYD_PASSWORD` | `admin` / `admin` | Web-terminal login. Change for anything beyond localhost. |
+| `CLAUDE_MODEL` | `opus` | Model passed to `claude --model` at launch. Accepts an alias (`opus`, `sonnet`, `fable`, ...) or a full model id. |
 
 ---
 
@@ -126,39 +209,41 @@ The agent starts in `/repo` with the session resumed. From here it can edit code
 
 | Piece | Role |
 |------|------|
-| `docker-compose.yml` | Defines the `agent` service: build, the `agent-box:latest` image, port `7681`, ttyd creds, and the volume mounts. |
-| `agent-box/Dockerfile` | Builds the image: Debian + Node.js + Claude Code CLI + docker CLI + ttyd, and creates the non-root `claude` user. |
-| `agent-box/ep.sh` | Entrypoint (runs as **root**): fixes ownership, grants `claude` access to the Docker socket, installs plugins, then launches ttyd. |
-| `agent-box/scripts/start_claude.sh` | Launched per ttyd connection; runs `claude --continue` if a transcript exists, else starts fresh. |
-| `agent-box/scripts/install_plugins.sh` | Idempotently installs the plugins from `plugins.txt`. |
-| `agent-box/CLAUDE.md` | The agent's global operating manual + guardrails. |
-| `.env` | Single source of truth for `COMPOSE_PROJECT_NAME`. |
+| `docker-compose.yml` | Defines the `agent` service: build, the `agent-box:latest` image, port `7681`, env vars, and the volume mounts. The `name:` field pins the Compose project name. |
+| `agent-box/Dockerfile` | Builds the image: Debian + Node.js + Claude Code CLI + docker CLI + ttyd, and creates the non-root `claude` user. The Claude Code auto-updater is disabled — the image owns the version. |
+| `agent-box/ep.sh` | Entrypoint (runs as **root**): fixes ownership, seeds first-run config, grants `claude` access to the Docker socket, installs plugins, then launches ttyd. |
+| `agent-box/scripts/start_claude.sh` | Launched per ttyd connection; runs `claude --model "$CLAUDE_MODEL" --continue` if a transcript exists, else starts fresh. |
+| `agent-box/scripts/install_plugins.sh` | Idempotently installs **and enables** the plugins from `plugins.txt`. |
+| `agent-box/CLAUDE.md` | The agent's global operating manual + guardrails, refreshed into the volume on every start. |
+| `.github/workflows/publish-agent-box.yml` | Builds the image on pushes to `main` touching `agent-box/**` and pushes `latest` + `sha-<commit>` tags to ghcr.io. |
 
 ### Startup lifecycle
 
 1. The container starts `ep.sh` as **root** (PID 1).
-2. It `chown`s `/home/claude` and `/repo`, writes onboarding-skip config, and **grants
-   the `claude` user access to the mounted Docker socket** by adding it to a group that
-   matches the socket's GID (it never `chmod`s the socket itself, which would alter the
-   host's inode).
-3. It installs plugins from `plugins.txt` as the `claude` user (idempotent).
+2. It `chown`s `/home/claude` and `/repo`, seeds onboarding-skip config (only files that
+   don't already exist — `settings.json` lives in the volume and accumulates runtime
+   state like plugin enablement, so it is never overwritten), and **grants the `claude`
+   user access to the mounted Docker socket** by adding it to a group that matches the
+   socket's GID (it never `chmod`s the socket itself, which would alter the host's
+   inode).
+3. It installs and enables plugins from `plugins.txt` as the `claude` user (idempotent).
 4. It launches **ttyd** on port `7681`, which runs `start_claude.sh` as `claude` on each
    connection. ttyd is limited to a single client (`-m 1`) so only one
    `claude --continue` ever touches the transcript.
 
 ### Persistence
 
-`/home/claude/.claude/projects` is bind-mounted to `./.claude_session/projects`, so
-conversation transcripts live on the host and survive restarts **and** rebuilds. On
-reconnect, `start_claude.sh` finds the transcript and runs `claude --continue` to resume.
+`/home/claude/.claude` is a named volume (`claude-data`): credentials, settings, plugins,
+and conversation transcripts all survive restarts **and** rebuilds. On reconnect,
+`start_claude.sh` finds the transcript and runs `claude --continue` to resume.
 (Transcript folders are named after the working directory — `/repo` becomes `-repo`.)
 
 ### Docker access
 
-The host socket is mounted at `/var/run/docker.sock`. Because the in-container compose
-file lives at `/repo`, its default project name would be `repo` — *different* from the
-host's. `COMPOSE_PROJECT_NAME` in `.env` (read by Compose on both sides) pins both to the
-same project, so the agent sees and controls the host-started stack.
+The host socket is mounted at `/var/run/docker.sock`. The compose file's `name:` field
+pins the Compose project name, and the agent always passes
+`-f /repo/docker-compose.yml`, so the agent sees and controls the same stack the host
+started — no environment coordination needed.
 
 ---
 
@@ -189,8 +274,8 @@ This is a development convenience, not a sandbox. Treat it accordingly:
 - **Change the ttyd credentials.** `TTYD_USER` / `TTYD_PASSWORD` default to `admin` /
   `admin` in `docker-compose.yml`. Change them (and don't expose port 7681 publicly)
   before using this anywhere but localhost.
-- `.claude_session/` holds your live credentials and conversation history — it's
-  gitignored; keep it out of version control.
+- The `claude-data` volume holds your live credentials and conversation history. Remove
+  it (`docker volume rm`) only if you intend to wipe the login and all transcripts.
 
 ---
 
@@ -199,11 +284,17 @@ This is a development convenience, not a sandbox. Treat it accordingly:
 - **Apply a change to `Dockerfile`/`ep.sh`/scripts:** these are baked into the image, so
   rebuild and recreate — `docker compose up --build -d`. A plain `restart` reuses the old
   image.
-- **The credentials path became a directory:** you skipped step 2. Stop the stack,
-  remove the directory, `touch` the file, and `up` again:
-  `docker compose down && rm -rf .claude_session/.claude_credentials.json && touch .claude_session/.claude_credentials.json`.
+- **Update Claude Code:** the in-container auto-updater is disabled (the npm global dir
+  is root-owned and the version should be reproducible anyway). Rebuild the image to pull
+  the latest CLI, or pin a version in the Dockerfile
+  (`npm install -g @anthropic-ai/claude-code@<version>`).
+- **Change the model:** set `CLAUDE_MODEL` on the `agent` service and recreate it. The
+  next session launch picks it up.
 - **Add a plugin:** add a line to `agent-box/plugins.txt`, then rebuild (or rerun
   `install_plugins.sh` inside the container as the `claude` user).
-- **Rename the project / image:** set `COMPOSE_PROJECT_NAME` in `.env`; the image is
-  pinned to `agent-box:latest` in `docker-compose.yml`.
+- **Update the image in a consuming project:** `docker compose pull agent`, then
+  `docker compose up -d agent`. Pin a `sha-<commit>` tag instead of `latest` for
+  reproducibility.
+- **Start over with a fresh login/history:** stop the stack and remove the project's
+  `claude-data` volume (this deletes credentials *and* all transcripts).
 - **Check what's running:** `docker compose -f /repo/docker-compose.yml ps`.
