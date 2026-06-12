@@ -18,8 +18,9 @@ below. Nothing else will stop you.
   `/repo/<service>`. **Editing `/repo/<service>` changes the code that service runs.**
 - **Docker access:** the host Docker socket is mounted at `/var/run/docker.sock`, so the
   `docker` / `docker compose` CLI controls the whole stack.
-- **Project name is pinned:** `COMPOSE_PROJECT_NAME` is set in your environment to match
-  the host, so `docker compose -f /repo/docker-compose.yml <cmd>` sees the running stack.
+- **Project name:** always pass `-f /repo/docker-compose.yml` to `docker compose` — the
+  `name:` field in that file is the project name, so the CLI will find the running stack
+  without any extra flags.
 
 ## Discover the topology before acting
 

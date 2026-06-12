@@ -30,7 +30,8 @@ COPY plugins.txt /opt/agent-box/plugins.txt
 COPY scripts/ /opt/agent-box/scripts/
 RUN chmod +x /opt/agent-box/scripts/*.sh
 
-# Bake the agent's operating manual in as the global CLAUDE.md. This describes the
-COPY CLAUDE.md /home/claude/.claude/CLAUDE.md
+# Bake the agent's operating manual so ep.sh can copy it into the .claude volume on every startup,
+# keeping it current after image rebuilds even when the volume already has content.
+COPY CLAUDE.md /opt/agent-box/CLAUDE.md
 
 ENTRYPOINT ["/ep.sh"]

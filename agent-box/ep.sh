@@ -5,6 +5,11 @@ echo "***** Starting agent container *****"
 
 CLAUDE_HOME=/home/claude
 mkdir -p "$CLAUDE_HOME/.claude"
+
+# Always refresh the operating manual from the baked-in copy so image rebuilds
+# are reflected in the volume without having to recreate it.
+cp /opt/agent-box/CLAUDE.md "$CLAUDE_HOME/.claude/CLAUDE.md"
+
 chown -R claude:claude "$CLAUDE_HOME"
 
 mkdir -p /repo
@@ -64,10 +69,11 @@ echo "Starting Claude Code via ttyd..."
 
 TTYD_USER="${TTYD_USER:-admin}"
 TTYD_PASSWORD="${TTYD_PASSWORD:-admin}"
+TTYD_TITLE="${TTYD_TITLE:-Agent Box}"
 
 # -m 1 limits ttyd to a single concurrent client so only one `claude --continue`
 # ever runs against the persisted conversation (two would corrupt the transcript).
-ttyd -p 7681 -m 1 -c "${TTYD_USER}:${TTYD_PASSWORD}" -W -T xterm-256color su - claude -c "cd /repo && /opt/agent-box/scripts/start_claude.sh" &
+ttyd -p 7681 -m 1 -c "${TTYD_USER}:${TTYD_PASSWORD}" -t "titleFixed=Agent console" -W -T xterm-256color su - claude -c "cd /repo && /opt/agent-box/scripts/start_claude.sh" &
 
 echo "Container ready. Access Claude Code at http://localhost:7681 with username '${TTYD_USER}' and password '${TTYD_PASSWORD}'." > /var/log/container.log
 chown claude:claude /var/log/container.log
