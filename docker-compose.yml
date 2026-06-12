@@ -31,9 +31,9 @@ services:
       # We must mount docker socket to allow the agent to run docker commands on the host
       - /var/run/docker.sock:/var/run/docker.sock
 
-      # We mount the current directory to /repo in the container, so that the agent can perform development on itself
+      # We mount the current directory to /workspace in the container, so that the agent can perform development on itself
       # For projects that uses the agent container, the codebase will be mounted here instead
-      - ./:/repo:z
+      - ./:/workspace:z
 
       # Persist Claude Code state (credentials, session transcripts, settings) across container rebuilds.
       # On first startup the user authenticates via OAuth; credentials are then stored in this volume.

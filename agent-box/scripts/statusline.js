@@ -1,7 +1,7 @@
 // Default agent-box status line. Claude Code runs this command on each render,
 // pipes session JSON on stdin, and displays the first line of stdout (ANSI
 // colors supported). Shows: model | git branch | context | plan usage | cost.
-// (No directory segment: in agent-box the working dir is always /repo.)
+// (No directory segment: in agent-box the working dir is always /workspace.)
 const { execSync } = require("child_process");
 
 let raw = "";

@@ -1,13 +1,15 @@
 # agent-box
 
-A containerized, self-driving **Claude Code** development environment. It runs Claude
-Code as the `agent` service in a Docker Compose stack, exposes it through a web terminal,
-and mounts the host Docker socket so the agent can build, run, and test the _other_
-services in the same stack.
+A containerized, self-driving **Claude Code** environment. It runs Claude Code as the
+`agent` service in a Docker Compose stack, exposes it through a web terminal, and
+mounts the host Docker socket so the agent can build, run, observe, and test the
+_other_ services in the same stack.
 
-`agent-box` is **reusable**: include the prebuilt image (or this directory) in a real
-project's compose file, mount that project at `/repo`, and you get an autonomous coding
-agent that can develop the project — and its sibling services — from the inside.
+`agent-box` is **reusable**: include the prebuilt image (or this directory) in a
+project's compose file, mount that project at `/workspace`, and you get an autonomous
+agent working from the inside. Software development is the headline use case, but the
+same box can run as a production log analyzer, exception triager, or any other role —
+see [Beyond development](#beyond-development).
 
 ---
 
@@ -20,7 +22,7 @@ From zero to a working agent in about a minute:
 2. **Create `docker-compose.yml`** in your project directory (empty dirs work too —
    the agent can bootstrap a project from scratch). Use the filename
    `docker-compose.yml` exactly: the agent is instructed to operate on
-   `/repo/docker-compose.yml`.
+   `/workspace/docker-compose.yml`.
 
    ```yaml
    name: my-project # Compose project name; also used by the agent inside the box
@@ -39,7 +41,7 @@ From zero to a working agent in about a minute:
          CLAUDE_MODEL: "opus"
        volumes:
          - /var/run/docker.sock:/var/run/docker.sock
-         - ./:/repo:z
+         - ./:/workspace:z
          - claude-data:/home/claude/.claude
 
    volumes:
@@ -54,7 +56,7 @@ From zero to a working agent in about a minute:
 
    Open **http://localhost:8081** (login `admin` / `admin`), complete the one-time
    Claude login, and start delegating. The agent can take it from here: scaffold code
-   in `/repo`, add new services to this same compose file, and build/start/test them
+   in `/workspace`, add new services to this same compose file, and build/start/test them
    itself through the mounted Docker socket.
 
 For the full story (building locally, configuration, how it works), read on.
@@ -129,14 +131,14 @@ asked again on future starts — even after image rebuilds.
 
 ### 3. You're in
 
-The agent starts in `/repo` with the session resumed. From here it can edit code, and run
-`docker compose -f /repo/docker-compose.yml ...` to control the rest of the stack.
+The agent starts in `/workspace` with the session resumed. From here it can edit code, and run
+`docker compose -f /workspace/docker-compose.yml ...` to control the rest of the stack.
 
 ---
 
 ## Using it for a real project
 
-`agent-box` develops whatever is mounted at `/repo`. There are two ways to include it:
+`agent-box` develops whatever is mounted at `/workspace`. There are two ways to include it:
 
 ### Option A — prebuilt image from ghcr.io (recommended)
 
@@ -157,7 +159,7 @@ services:
       CLAUDE_MODEL: "opus" # optional; opus/sonnet/fable or a full model id
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./:/repo:z
+      - ./:/workspace:z
       - claude-data:/home/claude/.claude
 
 volumes:
@@ -170,7 +172,7 @@ Notes:
   `sha-<commit>` tag is also published per build if you want to pin.
 - The `claude-data` volume is **project-scoped** (`<project>_claude-data`), so each
   project logs in once and keeps its own conversation history. Don't share it between
-  projects: transcripts are keyed to `/repo`, so a shared volume would make
+  projects: transcripts are keyed to `/workspace`, so a shared volume would make
   `claude --continue` resume another project's conversation.
 - `container_name` and the host port are fixed, so only one agent-box runs at a time;
   change both if you need two projects up simultaneously.
@@ -190,13 +192,44 @@ Everything else (ports, environment, volumes) is the same as Option A.
 ### Wiring up your services
 
 1. Add your project's own services to the same `docker-compose.yml`. By convention, each
-   service mounts its own subdirectory, `/repo/<service>` — so the agent editing
-   `/repo/api` changes the code the `api` service runs.
+   service mounts its own subdirectory, `/workspace/<service>` — so the agent editing
+   `/workspace/api` changes the code the `api` service runs.
 2. Reach sibling services over the Compose network by **service name as hostname** (e.g.
    `http://api:8000`, `db:5432`), using each service's _internal_ port.
 3. Set a `name:` at the top of the compose file. The agent runs
-   `docker compose -f /repo/docker-compose.yml ...`, which reads `name:` from the file —
+   `docker compose -f /workspace/docker-compose.yml ...`, which reads `name:` from the file —
    so host and agent always target the same stack, no env vars needed.
+
+---
+
+## Beyond development
+
+The baked-in manual defines the *environment and guardrails*; each deployment defines
+its *role* by placing a `CLAUDE.md` in the mounted workspace (Claude Code reads
+`/workspace/CLAUDE.md` automatically as project instructions). That makes the same
+image useful for non-coding jobs:
+
+- **Production log analyzer / exception triager** — run agent-box alongside a
+  production stack; the agent reads sibling-service logs (`docker compose logs`),
+  diagnoses exceptions, and writes triage reports into `/workspace`. The manual's
+  operational rules make it observe-first: it reports and recommends rather than
+  restarting things, unless your workspace `CLAUDE.md` explicitly authorizes actions.
+- **Data analysis station** — mount CSVs, dumps, or exports into `/workspace`;
+  Python (with pip/venv), `jq`, and `sqlite3`-style tooling via service containers
+  cover most workflows.
+- **Ops sidekick** — health summaries, config audits, certificate-expiry checks
+  across the stack, on demand from the web terminal.
+
+Tips for non-development deployments:
+
+- Set the role in `<project>/CLAUDE.md` (mounted at `/workspace/CLAUDE.md`): what the
+  agent is for, what it may and may not touch, where to write reports.
+- Set `DISABLE_PLAYWRIGHT: "true"` if no browser automation is needed.
+- For observe-only roles, consider **not** mounting the Docker socket — the agent
+  then sees only what's in `/workspace` (e.g. bind-mounted log directories, ideally
+  read-only: `- ./logs:/workspace/logs:ro`).
+- Treat the web terminal as production access: strong `TTYD_USER`/`TTYD_PASSWORD`,
+  and never expose the port publicly.
 
 ---
 
@@ -235,7 +268,7 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 ### Startup lifecycle
 
 1. The container starts `ep.sh` as **root** (PID 1).
-2. It `chown`s `/home/claude` and `/repo`, seeds onboarding-skip config (only files that
+2. It `chown`s `/home/claude` and `/workspace`, seeds onboarding-skip config (only files that
    don't already exist — `settings.json` lives in the volume and accumulates runtime
    state like plugin enablement, so it is never overwritten), and **grants the `claude`
    user access to the mounted Docker socket** by adding it to a group that matches the
@@ -251,13 +284,13 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 `/home/claude/.claude` is a named volume (`claude-data`): credentials, settings, plugins,
 and conversation transcripts all survive restarts **and** rebuilds. On reconnect,
 `start_claude.sh` finds the transcript and runs `claude --continue` to resume.
-(Transcript folders are named after the working directory — `/repo` becomes `-repo`.)
+(Transcript folders are named after the working directory — `/workspace` becomes `-workspace`.)
 
 ### Docker access
 
 The host socket is mounted at `/var/run/docker.sock`. The compose file's `name:` field
 pins the Compose project name, and the agent always passes
-`-f /repo/docker-compose.yml`, so the agent sees and controls the same stack the host
+`-f /workspace/docker-compose.yml`, so the agent sees and controls the same stack the host
 started — no environment coordination needed.
 
 ---
@@ -312,4 +345,4 @@ This is a development convenience, not a sandbox. Treat it accordingly:
   reproducibility.
 - **Start over with a fresh login/history:** stop the stack and remove the project's
   `claude-data` volume (this deletes credentials _and_ all transcripts).
-- **Check what's running:** `docker compose -f /repo/docker-compose.yml ps`.
+- **Check what's running:** `docker compose -f /workspace/docker-compose.yml ps`.

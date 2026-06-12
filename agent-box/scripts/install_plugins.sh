@@ -11,7 +11,7 @@
 #   # lines starting with '#' and blank lines are ignored
 set -eu
 
-PLUGINS_FILE="${PLUGINS_FILE:-/repo/agent-box/plugins.txt}"
+PLUGINS_FILE="${PLUGINS_FILE:-/workspace/agent-box/plugins.txt}"
 
 # Known marketplace name -> source mapping. Extend as you add marketplaces,
 # or override per-line with a second field in plugins.txt.

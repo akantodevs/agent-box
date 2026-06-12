@@ -10,10 +10,20 @@ mkdir -p "$CLAUDE_HOME/.claude"
 # are reflected in the volume without having to recreate it.
 cp /opt/agent-box/CLAUDE.md "$CLAUDE_HOME/.claude/CLAUDE.md"
 
+# One-time migration: the agent's working dir was renamed /repo -> /workspace.
+# Claude Code keys transcripts and per-project state to the working directory
+# (encoded as a dash-separated dir name), so volumes created before the rename
+# hold everything under projects/-repo. Move it so the conversation resumes.
+if [ -d "$CLAUDE_HOME/.claude/projects/-repo" ] && [ ! -e "$CLAUDE_HOME/.claude/projects/-workspace" ]; then
+    mv "$CLAUDE_HOME/.claude/projects/-repo" "$CLAUDE_HOME/.claude/projects/-workspace" \
+        && echo "Migrated Claude project state from projects/-repo to projects/-workspace." \
+        || echo "WARN: failed to migrate projects/-repo — the previous conversation may not resume"
+fi
+
 chown -R claude:claude "$CLAUDE_HOME"
 
-mkdir -p /repo
-chown -R claude:claude /repo
+mkdir -p /workspace
+chown -R claude:claude /workspace
 
 # Grant the claude user access to the mounted Docker socket.
 #
@@ -59,7 +69,7 @@ fi
 #     genuinely doesn't exist yet.
 if [ ! -f "$CLAUDE_HOME/.claude.json" ]; then
 cat > "$CLAUDE_HOME/.claude.json" <<'CLAUDEJSON'
-{"hasCompletedOnboarding":true,"projects":{"/repo":{"hasTrustDialogAccepted":true}}}
+{"hasCompletedOnboarding":true,"projects":{"/workspace":{"hasTrustDialogAccepted":true}}}
 CLAUDEJSON
 fi
 
@@ -107,7 +117,7 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-opus}"
 
 # -m 1 limits ttyd to a single concurrent client so only one `claude --continue`
 # ever runs against the persisted conversation (two would corrupt the transcript).
-ttyd -p 8081 -m 1 -c "${TTYD_USER}:${TTYD_PASSWORD}" -t "titleFixed=Agent console" -W -T xterm-256color su - claude -c "cd /repo && CLAUDE_MODEL='${CLAUDE_MODEL}' /opt/agent-box/scripts/start_claude.sh" &
+ttyd -p 8081 -m 1 -c "${TTYD_USER}:${TTYD_PASSWORD}" -t "titleFixed=Agent console" -W -T xterm-256color su - claude -c "cd /workspace && CLAUDE_MODEL='${CLAUDE_MODEL}' /opt/agent-box/scripts/start_claude.sh" &
 
 echo "Container ready. Access Claude Code at http://localhost:8081 with username '${TTYD_USER}' and password '${TTYD_PASSWORD}'." > /var/log/container.log
 chown claude:claude /var/log/container.log
