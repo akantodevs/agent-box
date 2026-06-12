@@ -201,6 +201,11 @@ All knobs are environment variables on the `agent` service in `docker-compose.ym
 | `TTYD_USER` / `TTYD_PASSWORD` | `admin` / `admin` | Web-terminal login. Change for anything beyond localhost. |
 | `CLAUDE_MODEL` | `opus` | Model passed to `claude --model` at launch. Accepts an alias (`opus`, `sonnet`, `fable`, ...) or a full model id. |
 
+A default **status line** (model, git branch, context usage, plan usage, session cost)
+ships in the image. To customize it, edit the `statusLine` entry in the volume's
+`~/.claude/settings.json` (or run `/statusline` inside Claude Code) — the entrypoint
+only sets the default when no `statusLine` is configured, so your changes stick.
+
 ---
 
 ## How it works
@@ -214,6 +219,7 @@ All knobs are environment variables on the `agent` service in `docker-compose.ym
 | `agent-box/ep.sh` | Entrypoint (runs as **root**): fixes ownership, seeds first-run config, grants `claude` access to the Docker socket, installs plugins, then launches ttyd. |
 | `agent-box/scripts/start_claude.sh` | Launched per ttyd connection; runs `claude --model "$CLAUDE_MODEL" --continue` if a transcript exists, else starts fresh. |
 | `agent-box/scripts/install_plugins.sh` | Idempotently installs **and enables** the plugins from `plugins.txt`. |
+| `agent-box/scripts/statusline.js` | Default Claude Code status line (model, git branch, context usage, plan usage, session cost). Wired into `settings.json` by `ep.sh` unless a `statusLine` is already configured. |
 | `agent-box/CLAUDE.md` | The agent's global operating manual + guardrails, refreshed into the volume on every start. |
 | `.github/workflows/publish-agent-box.yml` | Builds the image on pushes to `main` touching `agent-box/**` and pushes `latest` + `sha-<commit>` tags to ghcr.io. |
 

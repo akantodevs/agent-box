@@ -69,6 +69,25 @@ cat > "$CLAUDE_HOME/.claude/settings.json" <<'SETTINGS'
 SETTINGS
 fi
 
+# Default status line: point settings.json at the baked-in script, but only if
+# no statusLine is configured yet — an existing key means the user customized
+# it (or a previous boot already set it), so leave it alone. settings.json
+# lives in the claude-data volume, so this also retrofits volumes created
+# before the status line existed.
+node -e '
+const fs = require("fs");
+const f = process.argv[1];
+const s = JSON.parse(fs.readFileSync(f, "utf8"));
+if (!s.statusLine) {
+  // refreshInterval keeps the rate-limit reset countdown current while idle;
+  // without it the status line only re-renders on session events.
+  s.statusLine = { type: "command", command: "node /opt/agent-box/scripts/statusline.js", refreshInterval: 60 };
+  fs.writeFileSync(f, JSON.stringify(s, null, 2) + "\n");
+}
+' "$CLAUDE_HOME/.claude/settings.json" \
+    && chown claude:claude "$CLAUDE_HOME/.claude/settings.json" \
+    || echo "WARN: failed to configure default status line"
+
 # Install Claude Code plugins listed in plugins.txt (idempotent; runs as claude)
 echo "Installing plugins from /opt/agent-box/plugins.txt..."
 su - claude -c "PLUGINS_FILE=/opt/agent-box/plugins.txt /opt/agent-box/scripts/install_plugins.sh" \
