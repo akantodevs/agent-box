@@ -64,15 +64,26 @@ while IFS= read -r line || [ -n "$line" ]; do
 
     # 2. Install the plugin if not already present.
     if printf '%s' "$installed" | grep -qF "$spec"; then
-        echo "[plugins] $spec already installed — skipping"
+        echo "[plugins] $spec already installed"
     else
         echo "[plugins] installing $spec"
         if claude plugin install "$spec"; then
             installed="$(claude plugin list 2>/dev/null || true)"
         else
             echo "[plugins] WARN: failed to install $spec"
+            continue
         fi
     fi
+
+    # 3. Ensure the plugin is enabled. Enablement lives in ~/.claude/settings.json
+    # ("enabledPlugins"), separate from install state, and can be lost (e.g. by a
+    # settings reseed) while the plugin payload survives in the volume — leaving it
+    # installed but disabled. `claude plugin enable` exits non-zero when the plugin
+    # is already enabled, so treat that as success.
+    enable_out="$(claude plugin enable "$spec" 2>&1)" \
+        || printf '%s' "$enable_out" | grep -q "already enabled" \
+        || { echo "[plugins] WARN: failed to enable $spec: $enable_out"; continue; }
+    echo "[plugins] $spec enabled"
 done < "$PLUGINS_FILE"
 
 echo "[plugins] done"

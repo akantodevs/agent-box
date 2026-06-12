@@ -48,16 +48,25 @@ else
     echo "NOTE: $DOCKER_SOCK not present (or not a socket); skipping Docker access setup."
 fi
 
-#  Skip onboarding
+# Skip onboarding. These two files have different lifetimes, so seed them
+# independently:
+#   - .claude.json lives on the container's ephemeral filesystem (only ~/.claude
+#     is volume-backed), so it must be reseeded on every container recreate.
+#   - settings.json lives in the claude-data volume and accumulates runtime
+#     state (e.g. enabledPlugins, written by `claude plugin enable`). Seeding it
+#     whenever .claude.json was missing clobbered that state on every container
+#     recreate, leaving plugins installed but disabled. Only seed it when it
+#     genuinely doesn't exist yet.
 if [ ! -f "$CLAUDE_HOME/.claude.json" ]; then
-
 cat > "$CLAUDE_HOME/.claude.json" <<'CLAUDEJSON'
 {"hasCompletedOnboarding":true,"projects":{"/repo":{"hasTrustDialogAccepted":true}}}
 CLAUDEJSON
+fi
+
+if [ ! -f "$CLAUDE_HOME/.claude/settings.json" ]; then
 cat > "$CLAUDE_HOME/.claude/settings.json" <<'SETTINGS'
 {"agentPushNotifEnabled":true,"skipDangerousModePermissionPrompt":true}
 SETTINGS
-
 fi
 
 # Install Claude Code plugins listed in plugins.txt (idempotent; runs as claude)
