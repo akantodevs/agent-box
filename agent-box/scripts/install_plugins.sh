@@ -27,6 +27,15 @@ if [ ! -f "$PLUGINS_FILE" ]; then
     exit 0
 fi
 
+# Opt-out for the playwright plugin (browser automation): set
+# DISABLE_PLAYWRIGHT=true/1/yes to keep it off, e.g. when running agent-box
+# for something other than web development. Clearing the flag re-enables the
+# plugin on the next start (the enable step below is what brings it back).
+case "$(printf '%s' "${DISABLE_PLAYWRIGHT:-}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes) disable_playwright=1 ;;
+    *)          disable_playwright=0 ;;
+esac
+
 # Snapshot current state once; refresh after each mutating command.
 installed="$(claude plugin list 2>/dev/null || true)"
 known="$(claude plugin marketplace list 2>/dev/null || true)"
@@ -43,6 +52,20 @@ while IFS= read -r line || [ -n "$line" ]; do
     plugin="${spec%@*}"
     market="${spec#*@}"
     [ "$market" = "$spec" ] && market=""   # no '@' present
+
+    # 0. Honor DISABLE_PLAYWRIGHT: keep the plugin disabled if present, and
+    # don't install it on fresh volumes.
+    if [ "$disable_playwright" = 1 ] && [ "$plugin" = "playwright" ]; then
+        if printf '%s' "$installed" | grep -qF "$spec"; then
+            disable_out="$(claude plugin disable "$spec" 2>&1)" \
+                || printf '%s' "$disable_out" | grep -q "already disabled" \
+                || echo "[plugins] WARN: failed to disable $spec: $disable_out"
+            echo "[plugins] $spec disabled (DISABLE_PLAYWRIGHT is set)"
+        else
+            echo "[plugins] skipping $spec (DISABLE_PLAYWRIGHT is set)"
+        fi
+        continue
+    fi
 
     # 1. Ensure the marketplace is known.
     if [ -n "$market" ] && ! printf '%s' "$known" | grep -qF "$market"; then

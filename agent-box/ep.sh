@@ -88,9 +88,10 @@ if (!s.statusLine) {
     && chown claude:claude "$CLAUDE_HOME/.claude/settings.json" \
     || echo "WARN: failed to configure default status line"
 
-# Install Claude Code plugins listed in plugins.txt (idempotent; runs as claude)
+# Install Claude Code plugins listed in plugins.txt (idempotent; runs as claude).
+# DISABLE_PLAYWRIGHT is passed explicitly: `su -` strips inherited env vars.
 echo "Installing plugins from /opt/agent-box/plugins.txt..."
-su - claude -c "PLUGINS_FILE=/opt/agent-box/plugins.txt /opt/agent-box/scripts/install_plugins.sh" \
+su - claude -c "PLUGINS_FILE=/opt/agent-box/plugins.txt DISABLE_PLAYWRIGHT='${DISABLE_PLAYWRIGHT:-}' /opt/agent-box/scripts/install_plugins.sh" \
     || echo "WARN: plugin install reported problems (see output above)"
 
 echo "Starting Claude Code via ttyd..."

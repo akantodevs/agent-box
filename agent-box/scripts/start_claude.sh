@@ -4,6 +4,12 @@ cd /repo || exit 1
 
 echo "== Connection established. Starting Claude Code ==" > /var/log/container.log
 
+# This script runs under `su - claude`, a clean login shell that strips the
+# image's ENV vars — so anything Claude (or its MCP children) needs must be
+# exported here, not just set in the Dockerfile.
+export DISABLE_AUTOUPDATER=1                  # image owns the CLI version
+export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright # where the baked Chromium lives
+
 # Model is configurable via the CLAUDE_MODEL env var (set in docker-compose.yml,
 # passed through the `su - claude` login by ep.sh). Defaults to "opus".
 MODEL="${CLAUDE_MODEL:-opus}"

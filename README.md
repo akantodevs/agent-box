@@ -2,7 +2,7 @@
 
 A containerized, self-driving **Claude Code** development environment. It runs Claude
 Code as the `agent` service in a Docker Compose stack, exposes it through a web terminal,
-and mounts the host Docker socket so the agent can build, run, and test the *other*
+and mounts the host Docker socket so the agent can build, run, and test the _other_
 services in the same stack.
 
 `agent-box` is **reusable**: include the prebuilt image (or this directory) in a real
@@ -23,12 +23,14 @@ From zero to a working agent in about a minute:
    `/repo/docker-compose.yml`.
 
    ```yaml
-   name: my-project   # Compose project name; also used by the agent inside the box
+   name: my-project # Compose project name; also used by the agent inside the box
 
    services:
      agent:
        image: ghcr.io/akantodevs/agent-box:latest
        container_name: agent-box
+       init: true
+
        ports:
          - 7681:7681
        environment:
@@ -72,7 +74,12 @@ For the full story (building locally, configuration, how it works), read on.
 - **Configurable model** — set the `CLAUDE_MODEL` env var (defaults to `opus`) to pick
   the model Claude Code launches with.
 - **Plugins preinstalled** — anything listed in `agent-box/plugins.txt` (default:
-  `superpowers`) is installed *and enabled* idempotently on every start.
+  `superpowers`, `playwright`, and `frontend-design`) is installed _and enabled_
+  idempotently on every start.
+- **Browser automation built in** — the [Playwright MCP](https://github.com/microsoft/playwright-mcp)
+  server and a matching headless Chromium are baked into the image, so the agent can
+  drive web pages (navigate, click, fill forms, screenshot) to verify the UIs it
+  builds.
 - **Operating manual baked in** — `agent-box/CLAUDE.md` ships as the agent's global
   instructions, including the guardrails that keep it inside this stack.
 - **Published image** — every push to `main` builds and pushes
@@ -141,12 +148,13 @@ services:
   agent:
     image: ghcr.io/akantodevs/agent-box:latest
     container_name: agent-box
+    init: true
     ports:
       - 7681:7681
     environment:
       TTYD_USER: "admin"
       TTYD_PASSWORD: "admin"
-      CLAUDE_MODEL: "opus"     # optional; opus/sonnet/fable or a full model id
+      CLAUDE_MODEL: "opus" # optional; opus/sonnet/fable or a full model id
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./:/repo:z
@@ -172,9 +180,9 @@ Notes:
 Point `build.context` at this repo instead of using `image:`:
 
 ```yaml
-    build:
-      context: ../agent-box/agent-box   # path to agent-box/ in your checkout
-      dockerfile: Dockerfile
+build:
+  context: ../agent-box/agent-box # path to agent-box/ in your checkout
+  dockerfile: Dockerfile
 ```
 
 Everything else (ports, environment, volumes) is the same as Option A.
@@ -185,7 +193,7 @@ Everything else (ports, environment, volumes) is the same as Option A.
    service mounts its own subdirectory, `/repo/<service>` — so the agent editing
    `/repo/api` changes the code the `api` service runs.
 2. Reach sibling services over the Compose network by **service name as hostname** (e.g.
-   `http://api:8000`, `db:5432`), using each service's *internal* port.
+   `http://api:8000`, `db:5432`), using each service's _internal_ port.
 3. Set a `name:` at the top of the compose file. The agent runs
    `docker compose -f /repo/docker-compose.yml ...`, which reads `name:` from the file —
    so host and agent always target the same stack, no env vars needed.
@@ -196,10 +204,11 @@ Everything else (ports, environment, volumes) is the same as Option A.
 
 All knobs are environment variables on the `agent` service in `docker-compose.yml`:
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `TTYD_USER` / `TTYD_PASSWORD` | `admin` / `admin` | Web-terminal login. Change for anything beyond localhost. |
-| `CLAUDE_MODEL` | `opus` | Model passed to `claude --model` at launch. Accepts an alias (`opus`, `sonnet`, `fable`, ...) or a full model id. |
+| Variable                      | Default           | Purpose                                                                                                           |
+| ----------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `TTYD_USER` / `TTYD_PASSWORD` | `admin` / `admin` | Web-terminal login. Change for anything beyond localhost.                                                         |
+| `CLAUDE_MODEL`                | `opus`            | Model passed to `claude --model` at launch. Accepts an alias (`opus`, `sonnet`, `fable`, ...) or a full model id. |
+| `DISABLE_PLAYWRIGHT`          | unset             | Set to `"true"` to disable the Playwright browser-automation plugin — useful when running agent-box for something other than web development. Clearing it re-enables the plugin on the next start. |
 
 A default **status line** (model, git branch, context usage, plan usage, session cost)
 ships in the image. To customize it, edit the `statusLine` entry in the volume's
@@ -212,16 +221,16 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 
 ### Components
 
-| Piece | Role |
-|------|------|
-| `docker-compose.yml` | Defines the `agent` service: build, the `agent-box:latest` image, port `7681`, env vars, and the volume mounts. The `name:` field pins the Compose project name. |
-| `agent-box/Dockerfile` | Builds the image: Debian + Node.js + Claude Code CLI + docker CLI + ttyd, and creates the non-root `claude` user. The Claude Code auto-updater is disabled — the image owns the version. |
-| `agent-box/ep.sh` | Entrypoint (runs as **root**): fixes ownership, seeds first-run config, grants `claude` access to the Docker socket, installs plugins, then launches ttyd. |
-| `agent-box/scripts/start_claude.sh` | Launched per ttyd connection; runs `claude --model "$CLAUDE_MODEL" --continue` if a transcript exists, else starts fresh. |
-| `agent-box/scripts/install_plugins.sh` | Idempotently installs **and enables** the plugins from `plugins.txt`. |
-| `agent-box/scripts/statusline.js` | Default Claude Code status line (model, git branch, context usage, plan usage, session cost). Wired into `settings.json` by `ep.sh` unless a `statusLine` is already configured. |
-| `agent-box/CLAUDE.md` | The agent's global operating manual + guardrails, refreshed into the volume on every start. |
-| `.github/workflows/publish-agent-box.yml` | Builds the image on pushes to `main` touching `agent-box/**` and pushes `latest` + `sha-<commit>` tags to ghcr.io. |
+| Piece                                     | Role                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker-compose.yml`                      | Defines the `agent` service: build, the `agent-box:latest` image, port `7681`, env vars, and the volume mounts. The `name:` field pins the Compose project name.                                                                                                                                                                                                                          |
+| `agent-box/Dockerfile`                    | Builds the image: Debian + Node.js + Claude Code CLI + docker CLI + ttyd + Playwright MCP with headless Chromium, plus everyday CLI tools (`ps`/`pkill`, `jq`, `less`, `nc`, `dig`, `unzip`, `wget`, `tree`, Python with pip/venv, ...), and creates the non-root `claude` user. Ships a healthcheck on port 7681. The Claude Code auto-updater is disabled — the image owns the version. |
+| `agent-box/ep.sh`                         | Entrypoint (runs as **root**): fixes ownership, seeds first-run config, grants `claude` access to the Docker socket, installs plugins, then launches ttyd.                                                                                                                                                                                                                                |
+| `agent-box/scripts/start_claude.sh`       | Launched per ttyd connection; runs `claude --model "$CLAUDE_MODEL" --continue` if a transcript exists, else starts fresh.                                                                                                                                                                                                                                                                 |
+| `agent-box/scripts/install_plugins.sh`    | Idempotently installs **and enables** the plugins from `plugins.txt`.                                                                                                                                                                                                                                                                                                                     |
+| `agent-box/scripts/statusline.js`         | Default Claude Code status line (model, git branch, context usage, plan usage, session cost). Wired into `settings.json` by `ep.sh` unless a `statusLine` is already configured.                                                                                                                                                                                                          |
+| `agent-box/CLAUDE.md`                     | The agent's global operating manual + guardrails, refreshed into the volume on every start.                                                                                                                                                                                                                                                                                               |
+| `.github/workflows/publish-agent-box.yml` | Builds the image on pushes to `main` touching `agent-box/**` and pushes `latest` + `sha-<commit>` tags to ghcr.io.                                                                                                                                                                                                                                                                        |
 
 ### Startup lifecycle
 
@@ -302,5 +311,5 @@ This is a development convenience, not a sandbox. Treat it accordingly:
   `docker compose up -d agent`. Pin a `sha-<commit>` tag instead of `latest` for
   reproducibility.
 - **Start over with a fresh login/history:** stop the stack and remove the project's
-  `claude-data` volume (this deletes credentials *and* all transcripts).
+  `claude-data` volume (this deletes credentials _and_ all transcripts).
 - **Check what's running:** `docker compose -f /repo/docker-compose.yml ps`.
