@@ -9,7 +9,7 @@ services:
     # "<project>-<service>" (i.e. "agent-box-agent"), which is confusing next to
     # the "agent-box" container name.
     image: agent-box:latest
-    container_name: agent-box
+    container_name: agent-box-dev
     init: true
 
     ports:
@@ -21,7 +21,7 @@ services:
       TTYD_PASSWORD: "admin"
 
       # Set model Claude Code launches with (sonnet/opus/fable/..)
-      CLAUDE_MODEL: "fable"
+      CLAUDE_MODEL: "opus"
 
       # Uncomment to disable the Playwright browser-automation plugin,
       # e.g. when using agent-box for something other than web development.
