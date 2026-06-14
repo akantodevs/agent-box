@@ -5,8 +5,8 @@ FROM debian:trixie
 # helpers — all small, all used constantly when driving a compose stack.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git iproute2 nano \
-    procps psmisc jq less netcat-openbsd dnsutils \
-    unzip zip wget file tree \
+    procps psmisc jq less netcat-openbsd dnsutils openssh-client \
+    unzip zip wget file tree arping iputils-ping \
     python3-pip python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
