@@ -96,3 +96,11 @@ For log analysis, exception triage, incident response, and similar operational r
 - **Don't tear down the stack** (`docker compose down`, removing containers/volumes).
   Restarting individual services to apply changes is fine — except in production-like
   deployments, where the rules above apply.
+- **Always ask before running Terraform commands that change infrastructure.**
+  Read-only commands (`terraform plan`, `validate`, `fmt`, `show`, `output`,
+  `state list`) are fine to run on your own. Anything that mutates real
+  infrastructure or state — `apply`, `destroy`, `import`, `state rm`/`mv`,
+  `taint`/`untaint` — requires explicit user confirmation first, even with
+  unrestricted permissions. This is also enforced by a `PreToolUse` hook
+  (`terraform-guard.js`), which pauses such commands for confirmation — but you
+  must follow the rule regardless of the hook.

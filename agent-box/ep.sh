@@ -98,6 +98,29 @@ if (!s.statusLine) {
     && chown claude:claude "$CLAUDE_HOME/.claude/settings.json" \
     || echo "WARN: failed to configure default status line"
 
+# Terraform safety hook: require confirmation before any infrastructure- or
+# state-mutating terraform command (apply/destroy/import/state rm|mv/taint/...),
+# enforcing the guardrail in the operating manual even under
+# --dangerously-skip-permissions. Registered idempotently (skip if already
+# present) so existing claude-data volumes get it on the next boot without
+# duplicating the entry each restart.
+node -e '
+const fs = require("fs");
+const f = process.argv[1];
+const s = JSON.parse(fs.readFileSync(f, "utf8"));
+s.hooks = s.hooks || {};
+s.hooks.PreToolUse = s.hooks.PreToolUse || [];
+if (!JSON.stringify(s.hooks.PreToolUse).includes("terraform-guard")) {
+  s.hooks.PreToolUse.push({
+    matcher: "Bash",
+    hooks: [{ type: "command", command: "node /opt/agent-box/scripts/terraform-guard.js" }],
+  });
+  fs.writeFileSync(f, JSON.stringify(s, null, 2) + "\n");
+}
+' "$CLAUDE_HOME/.claude/settings.json" \
+    && chown claude:claude "$CLAUDE_HOME/.claude/settings.json" \
+    || echo "WARN: failed to register terraform safety hook"
+
 # Install Claude Code plugins listed in plugins.txt (idempotent; runs as claude).
 # DISABLE_PLAYWRIGHT is passed explicitly: `su -` strips inherited env vars.
 echo "Installing plugins from /opt/agent-box/plugins.txt..."
