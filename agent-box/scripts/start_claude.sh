@@ -10,6 +10,11 @@ echo "== Connection established. Starting Claude Code ==" > /var/log/container.l
 export DISABLE_AUTOUPDATER=1                  # image owns the CLI version
 export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright # where the baked Chromium lives
 
+# Terraform guard mode (No/Ask/Yes), consumed by the terraform-guard.js hook.
+# Exported here so the hook subprocess Claude spawns inherits it; ep.sh passes
+# it through the `su - claude` login. Defaults to empty -> the hook fails closed.
+export ALLOW_TERRAFORM_MODIFY="${ALLOW_TERRAFORM_MODIFY:-}"
+
 # Model is configurable via the CLAUDE_MODEL env var (set in docker-compose.yml,
 # passed through the `su - claude` login by ep.sh). Defaults to "opus".
 MODEL="${CLAUDE_MODEL:-opus}"

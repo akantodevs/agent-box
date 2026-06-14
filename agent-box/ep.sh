@@ -98,25 +98,32 @@ if (!s.statusLine) {
     && chown claude:claude "$CLAUDE_HOME/.claude/settings.json" \
     || echo "WARN: failed to configure default status line"
 
-# Terraform safety hook: require confirmation before any infrastructure- or
-# state-mutating terraform command (apply/destroy/import/state rm|mv/taint/...),
-# enforcing the guardrail in the operating manual even under
-# --dangerously-skip-permissions. Registered idempotently (skip if already
-# present) so existing claude-data volumes get it on the next boot without
-# duplicating the entry each restart.
+# Terraform safety hook: gate infrastructure- or state-mutating terraform
+# commands (apply/destroy/import/state rm|mv/taint/...) per the ALLOW_TERRAFORM_MODIFY
+# guardrail in the operating manual, even under --dangerously-skip-permissions.
+# The one script is registered for BOTH PreToolUse (decide) and PostToolUse
+# (remember an approved directory). Registered idempotently per event — each is
+# added only if a terraform-guard entry isn't already there — so existing
+# claude-data volumes (which already have the PreToolUse entry) gain PostToolUse
+# on the next boot without duplicating either.
 node -e '
 const fs = require("fs");
 const f = process.argv[1];
 const s = JSON.parse(fs.readFileSync(f, "utf8"));
+const entry = () => ({
+  matcher: "Bash",
+  hooks: [{ type: "command", command: "node /opt/agent-box/scripts/terraform-guard.js" }],
+});
 s.hooks = s.hooks || {};
-s.hooks.PreToolUse = s.hooks.PreToolUse || [];
-if (!JSON.stringify(s.hooks.PreToolUse).includes("terraform-guard")) {
-  s.hooks.PreToolUse.push({
-    matcher: "Bash",
-    hooks: [{ type: "command", command: "node /opt/agent-box/scripts/terraform-guard.js" }],
-  });
-  fs.writeFileSync(f, JSON.stringify(s, null, 2) + "\n");
+let changed = false;
+for (const ev of ["PreToolUse", "PostToolUse"]) {
+  s.hooks[ev] = s.hooks[ev] || [];
+  if (!JSON.stringify(s.hooks[ev]).includes("terraform-guard")) {
+    s.hooks[ev].push(entry());
+    changed = true;
+  }
 }
+if (changed) fs.writeFileSync(f, JSON.stringify(s, null, 2) + "\n");
 ' "$CLAUDE_HOME/.claude/settings.json" \
     && chown claude:claude "$CLAUDE_HOME/.claude/settings.json" \
     || echo "WARN: failed to register terraform safety hook"
@@ -138,9 +145,14 @@ TTYD_TITLE="${TTYD_TITLE:-Agent Box}"
 # explicitly into the command string below rather than relying on inheritance.
 CLAUDE_MODEL="${CLAUDE_MODEL:-opus}"
 
+# Terraform guard mode (No/Ask/Yes) for the terraform-guard.js hook. Passed
+# through the `su - claude` login (which strips inherited env) the same way as
+# CLAUDE_MODEL; empty/unset makes the hook fail closed (block mutating commands).
+ALLOW_TERRAFORM_MODIFY="${ALLOW_TERRAFORM_MODIFY:-}"
+
 # -m 1 limits ttyd to a single concurrent client so only one `claude --continue`
 # ever runs against the persisted conversation (two would corrupt the transcript).
-ttyd -p 8081 -m 1 -c "${TTYD_USER}:${TTYD_PASSWORD}" -t "titleFixed=Agent console" -W -T xterm-256color su - claude -c "cd /workspace && CLAUDE_MODEL='${CLAUDE_MODEL}' /opt/agent-box/scripts/start_claude.sh" &
+ttyd -p 8081 -m 1 -c "${TTYD_USER}:${TTYD_PASSWORD}" -t "titleFixed=Agent console" -W -T xterm-256color su - claude -c "cd /workspace && CLAUDE_MODEL='${CLAUDE_MODEL}' ALLOW_TERRAFORM_MODIFY='${ALLOW_TERRAFORM_MODIFY}' /opt/agent-box/scripts/start_claude.sh" &
 
 echo "Container ready. Access Claude Code at http://localhost:8081 with username '${TTYD_USER}' and password '${TTYD_PASSWORD}'." > /var/log/container.log
 chown claude:claude /var/log/container.log

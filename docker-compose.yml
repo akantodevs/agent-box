@@ -23,6 +23,17 @@ services:
       # Set model Claude Code launches with (sonnet/opus/fable/..)
       CLAUDE_MODEL: "opus"
 
+      # Controls whether the agent may run infrastructure-mutating Terraform
+      # (apply/destroy/import/state rm|mv/taint/...). Read-only commands (plan,
+      # validate, show, ...) always run.
+      #   No   - blocked outright
+      #   Ask  - prompt once per terraform directory, then remember that dir
+      #          (so approving stage/ doesn't auto-approve prod/)
+      #   Yes  - run without asking
+      # If unset/unrecognized the guard fails closed (blocks). Per-directory Ask
+      # approvals persist in /home/claude/.claude/terraform-approvals.json.
+      ALLOW_TERRAFORM_MODIFY: "Ask"
+
       # Uncomment to disable the Playwright browser-automation plugin,
       # e.g. when using agent-box for something other than web development.
       # DISABLE_PLAYWRIGHT: "true"

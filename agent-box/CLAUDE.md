@@ -96,11 +96,18 @@ For log analysis, exception triage, incident response, and similar operational r
 - **Don't tear down the stack** (`docker compose down`, removing containers/volumes).
   Restarting individual services to apply changes is fine — except in production-like
   deployments, where the rules above apply.
-- **Always ask before running Terraform commands that change infrastructure.**
+- **Terraform that changes infrastructure is gated by `ALLOW_TERRAFORM_MODIFY`.**
   Read-only commands (`terraform plan`, `validate`, `fmt`, `show`, `output`,
-  `state list`) are fine to run on your own. Anything that mutates real
+  `state list`) are always fine to run on your own. Anything that mutates real
   infrastructure or state — `apply`, `destroy`, `import`, `state rm`/`mv`,
-  `taint`/`untaint` — requires explicit user confirmation first, even with
-  unrestricted permissions. This is also enforced by a `PreToolUse` hook
-  (`terraform-guard.js`), which pauses such commands for confirmation — but you
-  must follow the rule regardless of the hook.
+  `taint`/`untaint`, `force-unlock`, `workspace delete` — is governed by the
+  `ALLOW_TERRAFORM_MODIFY` env var (set per deployment in `docker-compose.yml`):
+  `No` blocks it, `Ask` requires explicit user confirmation, `Yes` allows it;
+  unset/unrecognized fails closed (blocks). This is enforced by the
+  `terraform-guard.js` hook (registered for both `PreToolUse` and `PostToolUse`).
+  In `Ask` mode the hook prompts **once per terraform directory** and remembers
+  that directory after you approve, so a sibling root (e.g. stage vs prod) still
+  asks separately; approvals persist in `~/.claude/terraform-approvals.json`.
+  Regardless of mode or hook, treat infrastructure-mutating Terraform as
+  requiring user intent — never run `apply`/`destroy` to "try something" without
+  the user asking for it.
