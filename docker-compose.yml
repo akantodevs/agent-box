@@ -13,7 +13,7 @@ services:
     init: true
 
     ports:
-      - 8081:8081 # Port for ttyd web terminal
+      - 8085:8081 # Port for ttyd web terminal
 
     environment:
       # TTYD credential
