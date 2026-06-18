@@ -32,6 +32,50 @@ below. Nothing else will stop you.
   — the `name:` field in that file is the project name, so the CLI will find the
   running stack without any extra flags.
 
+## Your toolbelt — installed locally, run it directly
+
+Your own container ships with a working set of CLI tools **already installed and
+on `PATH`**. Run them directly in your shell. Do **not** stand up a throwaway or
+sibling container (no `docker run some/image …`, no scratch service) just to get
+a tool — that's slower, more fragile, and unnecessary because the tool is already
+right here:
+
+- **`terraform`** — IaC. (Mutating commands are gated by `ALLOW_TERRAFORM_MODIFY`;
+  see Guardrails. Run `terraform …` directly, not inside another container.)
+- **`ssh` / `scp`** (openssh-client) — reach remote hosts directly.
+- **`docker` / `docker compose`** — drive *this* Compose stack over the mounted
+  socket (that's the one legitimate use of Docker — operating the stack, not
+  wrapping local tools).
+- **Networking:** `ping`, `arping`, `nc` (netcat), `dig` / `nslookup`, `curl`, `wget`.
+- **Languages & data:** `node` / `npm`, `python3` (+ `pip` / `venv`), `jq`, `git`.
+- **Files:** `unzip`, `zip`, `tree`, `file`, `less`, `nano`.
+
+Check with `command -v <tool>` if unsure. If you genuinely need something that
+isn't installed, report it (or, in self-development deployments, add it to the
+image's Dockerfile and note that a rebuild is required) — don't route around a
+missing tool by launching another container.
+
+## Working in a non-interactive shell
+
+You drive a shell with no human at the keyboard, so a command that waits on a TTY
+will **hang the session**. Operate accordingly:
+
+- **Stay non-interactive.** Don't launch a pager, editor, or interactive prompt
+  (`less`, `vim`/`nano` as an editor, `top`, `git rebase -i`). Defeat pagers and
+  prompts up front: pipe through `| cat`, pass `-y` / `--yes` / `--no-pager`, and
+  set `GIT_PAGER=cat` and `DEBIAN_FRONTEND=noninteractive`. If a tool only works
+  interactively, find the flag that makes it batch — or report that you can't.
+- **`ssh` must fail fast, not hang.** Run remote commands with
+  `ssh -o BatchMode=yes -o ConnectTimeout=10 …` so a missing key or a password
+  prompt errors out instead of blocking forever. New hosts won't be in
+  `known_hosts`: decide deliberately (e.g. `-o StrictHostKeyChecking=accept-new`
+  when that's acceptable) rather than reflexively disabling host-key checking.
+- **Keep secrets out of the transcript and `/workspace`.** Tokens, SSH keys, and
+  cloud / `terraform` credentials must not be `echo`/`cat`-ed into your output or
+  written to files under `/workspace` — both the transcript and the workspace
+  persist. Read secrets from the environment or mounted files and pass them
+  through indirectly (`$VAR`); redact when you must show surrounding context.
+
 ## Discover the topology before acting
 
 Do not assume service names or ports. At the start of a task:
@@ -110,4 +154,8 @@ For log analysis, exception triage, incident response, and similar operational r
   asks separately; approvals persist in `~/.claude/terraform-approvals.json`.
   Regardless of mode or hook, treat infrastructure-mutating Terraform as
   requiring user intent — never run `apply`/`destroy` to "try something" without
-  the user asking for it.
+  the user asking for it. Always run `terraform plan` and read it first so you
+  know the blast radius before you change anything.
+- **Clean up what you create outside `/workspace`.** Scratch files, `/tmp` dirs,
+  and throwaway Docker tags/containers should be removed once you're done with
+  them; anything meant to persist (reports, artifacts) belongs in `/workspace`.
