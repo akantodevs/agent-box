@@ -150,9 +150,14 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-opus}"
 # CLAUDE_MODEL; empty/unset makes the hook fail closed (block mutating commands).
 ALLOW_TERRAFORM_MODIFY="${ALLOW_TERRAFORM_MODIFY:-}"
 
+# Remote Control session name. When set, start_claude.sh launches Claude Code with
+# `--remote-control <name>`; empty/unset leaves Remote Control off. Passed through
+# the `su - claude` login (which strips inherited env) the same way as CLAUDE_MODEL.
+REMOTE_CONTROL_NAME="${REMOTE_CONTROL_NAME:-}"
+
 # -m 1 limits ttyd to a single concurrent client so only one `claude --continue`
 # ever runs against the persisted conversation (two would corrupt the transcript).
-ttyd -p 8081 -m 1 -c "${TTYD_USER}:${TTYD_PASSWORD}" -t "titleFixed=Agent console" -W -T xterm-256color su - claude -c "cd /workspace && CLAUDE_MODEL='${CLAUDE_MODEL}' ALLOW_TERRAFORM_MODIFY='${ALLOW_TERRAFORM_MODIFY}' /opt/agent-box/scripts/start_claude.sh" &
+ttyd -p 8081 -m 1 -c "${TTYD_USER}:${TTYD_PASSWORD}" -t "titleFixed=Agent console" -W -T xterm-256color su - claude -c "cd /workspace && CLAUDE_MODEL='${CLAUDE_MODEL}' ALLOW_TERRAFORM_MODIFY='${ALLOW_TERRAFORM_MODIFY}' REMOTE_CONTROL_NAME='${REMOTE_CONTROL_NAME}' /opt/agent-box/scripts/start_claude.sh" &
 
 echo "Container ready. Access Claude Code at http://localhost:8081 with username '${TTYD_USER}' and password '${TTYD_PASSWORD}'." > /var/log/container.log
 chown claude:claude /var/log/container.log

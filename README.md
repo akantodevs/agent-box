@@ -243,6 +243,7 @@ All knobs are environment variables on the `agent` service in `docker-compose.ym
 | `CLAUDE_MODEL`                | `opus`            | Model passed to `claude --model` at launch. Accepts an alias (`opus`, `sonnet`, `fable`, ...) or a full model id. |
 | `DISABLE_PLAYWRIGHT`          | unset             | Set to `"true"` to disable the Playwright browser-automation plugin — useful when running agent-box for something other than web development. Clearing it re-enables the plugin on the next start. |
 | `ALLOW_TERRAFORM_MODIFY`      | `Ask`<sup>*</sup> | Whether the agent may run infrastructure-mutating Terraform (`apply`, `destroy`, `import`, `state rm`/`mv`, `taint`, ...). `No` blocks, `Ask` prompts once per terraform directory then remembers it, `Yes` runs freely. Read-only commands always run. <sup>*</sup>Shipped as `Ask` in `docker-compose.yml`; if unset/unrecognized the guard fails **closed** (blocks). |
+| `REMOTE_CONTROL_NAME`         | unset             | When set, Claude Code launches with `--remote-control <name>`, enabling Remote Control for the session and naming it. Leave unset to keep Remote Control off (the default). |
 
 A default **status line** (model, git branch, context usage, plan usage, session cost)
 ships in the image. To customize it, edit the `statusLine` entry in the volume's

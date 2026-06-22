@@ -19,6 +19,15 @@ export ALLOW_TERRAFORM_MODIFY="${ALLOW_TERRAFORM_MODIFY:-}"
 # passed through the `su - claude` login by ep.sh). Defaults to "opus".
 MODEL="${CLAUDE_MODEL:-opus}"
 
+# Remote Control: when REMOTE_CONTROL_NAME is set (in docker-compose.yml, passed
+# through the `su - claude` login by ep.sh), launch with `--remote-control <name>`
+# so the session is remote-controllable and shows up under that name. Empty/unset
+# leaves Remote Control off (the default).
+REMOTE_CONTROL_ARGS=()
+if [ -n "${REMOTE_CONTROL_NAME:-}" ]; then
+    REMOTE_CONTROL_ARGS=(--remote-control "$REMOTE_CONTROL_NAME")
+fi
+
 # Single resumable session: continue the existing conversation if one exists,
 # otherwise start fresh. ttyd re-launches this script on every (re)connect, so
 # this is what makes the session survive both container restarts and browser
@@ -26,7 +35,7 @@ MODEL="${CLAUDE_MODEL:-opus}"
 # encoding; this container only ever has the /workspace project, so any transcript
 # means "resume".
 if find "$HOME/.claude/projects" -name '*.jsonl' -print -quit 2>/dev/null | grep -q .; then
-    exec claude --model "$MODEL" --continue --dangerously-skip-permissions
+    exec claude --model "$MODEL" --continue --dangerously-skip-permissions "${REMOTE_CONTROL_ARGS[@]}"
 else
-    exec claude --model "$MODEL" --dangerously-skip-permissions
+    exec claude --model "$MODEL" --dangerously-skip-permissions "${REMOTE_CONTROL_ARGS[@]}"
 fi
