@@ -29,6 +29,19 @@ RUN curl -fsSL https://apt.releases.hashicorp.com/gpg -o /etc/apt/keyrings/hashi
 RUN echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/hashicorp.asc] https://apt.releases.hashicorp.com $(. /etc/os-release && echo "$VERSION_CODENAME") main" | tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
 RUN apt-get update && apt-get install -y terraform && rm -rf /var/lib/apt/lists/*
 
+# Install kubectl (Kubernetes CLI). Single dependency-free static binary, so it's
+# fetched straight from the official release bucket like ttyd above rather than via
+# an apt repo. `stable.txt` resolves to the current stable release at build time, and
+# the published sha256 guards against a corrupted/truncated download. Works against
+# any conformant cluster (vanilla k8s, k3s, …); the kubeconfig is supplied per
+# deployment, not baked here.
+RUN KVER="$(curl -fsSL https://dl.k8s.io/release/stable.txt)" \
+    && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${KVER}/bin/linux/amd64/kubectl" \
+    && curl -fsSL -o /tmp/kubectl.sha256 "https://dl.k8s.io/release/${KVER}/bin/linux/amd64/kubectl.sha256" \
+    && echo "$(cat /tmp/kubectl.sha256)  /usr/local/bin/kubectl" | sha256sum --check \
+    && chmod +x /usr/local/bin/kubectl \
+    && rm -f /tmp/kubectl.sha256
+
 # Install Claude Code CLI (image owns the version; update by rebuilding, not in-container)
 ENV DISABLE_AUTOUPDATER=1
 RUN npm install -g @anthropic-ai/claude-code

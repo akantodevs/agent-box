@@ -43,6 +43,10 @@ right here:
 - **`terraform`** — IaC. (Mutating commands are gated by `ALLOW_TERRAFORM_MODIFY`;
   see Guardrails. Run `terraform …` directly, not inside another container.)
 - **`ssh` / `scp`** (openssh-client) — reach remote hosts directly.
+- **`kubectl`** — Kubernetes CLI. Works against any conformant cluster (vanilla
+  k8s, k3s, …); a kubeconfig is *not* baked into the image, so point it at a
+  cluster per deployment (mount/copy a kubeconfig or set `KUBECONFIG`). Run it
+  directly, not inside another container.
 - **`docker` / `docker compose`** — drive *this* Compose stack over the mounted
   socket (that's the one legitimate use of Docker — operating the stack, not
   wrapping local tools).
