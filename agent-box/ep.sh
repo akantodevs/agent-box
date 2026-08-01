@@ -9,17 +9,6 @@ mkdir -p "$CLAUDE_HOME/.claude"
 # Always refresh the operating manual from the baked-in copy so image rebuilds
 # are reflected in the volume without having to recreate it.
 cp /opt/agent-box/CLAUDE.md "$CLAUDE_HOME/.claude/CLAUDE.md"
-
-# One-time migration: the agent's working dir was renamed /repo -> /workspace.
-# Claude Code keys transcripts and per-project state to the working directory
-# (encoded as a dash-separated dir name), so volumes created before the rename
-# hold everything under projects/-repo. Move it so the conversation resumes.
-if [ -d "$CLAUDE_HOME/.claude/projects/-repo" ] && [ ! -e "$CLAUDE_HOME/.claude/projects/-workspace" ]; then
-    mv "$CLAUDE_HOME/.claude/projects/-repo" "$CLAUDE_HOME/.claude/projects/-workspace" \
-        && echo "Migrated Claude project state from projects/-repo to projects/-workspace." \
-        || echo "WARN: failed to migrate projects/-repo — the previous conversation may not resume"
-fi
-
 chown -R claude:claude "$CLAUDE_HOME"
 
 mkdir -p /workspace
