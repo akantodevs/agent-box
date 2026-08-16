@@ -26,6 +26,16 @@ below. Nothing else will stop you.
   workspace is mounted into them too — by convention each service mounts its own
   subdirectory, `/workspace/<service>`. **Editing `/workspace/<service>` changes the
   code that service runs.**
+- **Sessions:** the container runs one Claude Code session per browser tab, not one
+  overall. The session administration page (published on host port 8086 by default)
+  lists every session in the state volume and opens each in its own tab; the terminal
+  port resumes whichever session its URL names, and starts a new one when it names
+  none. Two tabs cannot share one session — the launcher refuses the second, because
+  two processes on one transcript corrupt it. Closing a tab ends that session: the
+  launcher stops its Claude process and the MCP servers under it, leaving the
+  transcript to be resumed later. So other sessions may be running alongside you right
+  now: their `claude` processes show up in `ps`, and their transcripts sit beside yours
+  in `~/.claude/projects/`.
 - **Docker access:** the host Docker socket is mounted at `/var/run/docker.sock`, so
   the `docker` / `docker compose` CLI controls the whole stack.
 - **Project name:** always pass `-f /workspace/docker-compose.yml` to `docker compose`
@@ -112,6 +122,32 @@ workflow — invoke them via the Skill tool before acting:
 - **systematic-debugging** — for any bug or test failure; diagnose before patching.
 - **requesting-code-review** — before considering a piece of work done.
 
+## Recording what you learn
+
+Durable knowledge is filed by **kind and audience**, not by whatever is quickest to
+write. Before writing something down, decide which of these it is:
+
+- **Memory files** — `~/.claude/projects/<project>/memory/`, one fact per file, with
+  a one-line pointer added to `MEMORY.md`. Use for this deployment's working
+  knowledge and for how the user wants you to work. They live in the state volume:
+  they survive rebuilds, but they are invisible from `/workspace` and do **not**
+  travel with the repo to another box.
+- **`/workspace/CLAUDE.md`** — standing instructions for this workspace, loaded in
+  full every session. Use for rules any agent or contributor on this repo needs.
+  Keep it tight; every line costs context on every session. You cannot commit it
+  (see Guardrails) — say so when you change it.
+- **Skills** — anything procedural. A repeatable multi-step procedure belongs in a
+  skill, never in a memory file or a CLAUDE.md: a skill costs one line of context
+  until it is invoked. Project-specific skills live in `/workspace/.claude/skills/`
+  so they travel with the repo. Skills useful to *any* agent-box deployment belong
+  in the image instead.
+
+Never hand-edit `~/.claude/CLAUDE.md` — the entrypoint overwrites it from the baked
+copy on every container start, so changes must be made in `agent-box/CLAUDE.md` and
+rebuilt. The same shadowing applies to anything else placed under `~/.claude` at
+build time: the state volume is mounted over that path, so baked content must land
+in `/opt/agent-box/` and be copied into the volume by `ep.sh` at startup.
+
 ## Observing and operating a running stack
 
 For log analysis, exception triage, incident response, and similar operational roles:
@@ -134,7 +170,12 @@ For log analysis, exception triage, incident response, and similar operational r
   `/workspace/docker-compose.yml`. Never touch the host or containers outside this
   Compose project.
 - **Never act on the `agent` service — that's you.** Do not stop, kill, restart,
-  rebuild, or remove your own container; doing so terminates your session.
+  rebuild, or remove your own container; doing so terminates your session — and every
+  other session running in the box, not just yours.
+- **Leave other sessions alone.** Only the session you are in is yours. Never signal
+  or kill another `claude` process, and never delete a transcript — from the
+  administration page or from `~/.claude/projects/`. Deletion is permanent: the
+  conversation cannot be recovered, and it may be one someone is still using.
 - **Do not run git operations.** If the workspace is a git repository, leave your
   changes in the working tree; commits, branches, and pushes are handled outside the
   container.

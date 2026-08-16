@@ -1,3 +1,9 @@
 # Claude Code session transcripts (persisted across container rebuilds).
 # Conversation history is runtime state, not source — keep it out of the repo.
 .claude_session/
+
+# Python bytecode from running the agent-box test suite. `scripts/` is COPYd
+# into the image, so a stray __pycache__ would otherwise be baked into any
+# locally built image as well as showing up as untracked here.
+__pycache__/
+*.pyc

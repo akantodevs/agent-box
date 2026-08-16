@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Box sessions</title>
+<style>
+  :root { color-scheme: dark; --bg:#11131a; --card:#181b24; --line:#252936;
+          --text:#dfe3ee; --soft:#b3b9cb; --dim:#8a90a3;
+          --live:#4ec9a3; --warn:#e2b341; --danger:#e06c75; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:2rem 1.25rem; background:var(--bg); color:var(--text);
+         font:14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  main { max-width: 62rem; margin: 0 auto; }
+  header { display:flex; align-items:baseline; gap:1rem; margin-bottom:1.25rem; }
+  h1 { font-size:1.1rem; margin:0; font-weight:600; letter-spacing:.02em; }
+  .count { color:var(--dim); }
+  .new { margin-left:auto; font:inherit; text-decoration:none; cursor:pointer;
+         border:1px solid var(--live); color:var(--live); border-radius:6px;
+         padding:.35rem .7rem; white-space:nowrap; }
+  .new:hover { background:rgba(78,201,163,.12); }
+  ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.5rem; }
+  li { position:relative; background:var(--card); border:1px solid var(--line);
+       border-radius:8px; padding:.7rem 1rem;
+       display:grid; grid-template-columns:auto minmax(0,1fr) auto auto auto;
+       align-items:baseline; column-gap:.75rem; }
+  li:has(.open) { cursor:pointer; }
+  li:has(.open):hover { border-color:var(--dim); }
+
+  /* The link is stretched over the whole card, so a click anywhere on a
+     resumable row opens its terminal — while staying a real <a>, so
+     middle-click, ctrl-click and "copy link" all keep working. Live rows have
+     no <a> at all, which is what makes them unclickable. */
+  .open { text-decoration:none; color:inherit; font-weight:600; }
+  .open::after { content:""; position:absolute; inset:0; border-radius:8px; }
+  .open:hover { color:var(--live); }
+
+  /* Two of the rows in a typical list are deliberately not resumable, so the
+     difference has to be visible at rest rather than only on hover: a resumable
+     row carries a left rule in the live colour, a running one does not. Hover
+     and focus then confirm what the rule already promised. */
+  li:has(.open) { border-left:2px solid rgba(78,201,163,.45); }
+  li:has(.open):hover { border-left-color:var(--live); }
+  li.live { border-left:2px solid transparent; }
+  .open:focus-visible::after { outline:2px solid var(--live); outline-offset:2px; }
+  .name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+          unicode-bidi:isolate; }
+  /* Three tiers of name: a model-written title reads as a title, a name lifted
+     from the first prompt is plainer, and "(untitled)" is plainly a placeholder. */
+  .name.derived { font-weight:400; color:var(--soft); }
+  .name.untitled { color:var(--dim); font-weight:400; font-style:italic; }
+  .meta { color:var(--dim); white-space:nowrap; font-size:.9em; }
+  .dot { color:var(--dim); }
+  .live .dot { color:var(--live); }
+  .waiting .dot { color:var(--warn); }
+
+  .sub { grid-column:1 / -1; margin-top:.3rem; display:flex; gap:.6rem;
+         color:var(--dim); font-size:.9em; min-width:0; }
+  .sub .id { flex:none; }
+  .sub .what { overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+               unicode-bidi:isolate; }
+  .sub .where { margin-left:auto; flex:none; opacity:.75; unicode-bidi:isolate; }
+
+  /* Raised above the stretched link so the row's own click never reaches it. */
+  .del { position:relative; z-index:1; font:inherit; color:var(--dim);
+         background:transparent; cursor:pointer; border:1px solid transparent;
+         border-radius:6px; padding:.1rem .5rem; }
+  .del:hover { color:var(--danger); border-color:var(--danger); }
+  .del[disabled] { cursor:default; opacity:.35; }
+  .del[disabled]:hover { color:var(--dim); border-color:transparent; }
+
+  .note { color:var(--dim); padding:1.5rem 0; }
+  .note b { color:var(--text); font-weight:600; }
+  .error { color:var(--warn); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Agent Box sessions</h1>
+    <span class="count" id="count"></span>
+    <a class="new" id="new" target="_blank" rel="noopener">+ New session</a>
+  </header>
+  <ul id="list"></ul>
+  <p class="note" id="empty" hidden>No sessions yet. Start one with <b>+ New session</b>.</p>
+  <p class="note error" id="error" hidden>Cannot reach the session server &mdash; retrying.</p>
+</main>
+
+<script>
+  // The container cannot know which host port the terminal was published on, so
+  // the port is baked in at startup and the hostname comes from the browser.
+  const TTYD_PORT = "__TTYD_PUBLIC_PORT__";
+  const REFRESH_MS = 5000;
+
+  const terminalUrl = (id) =>
+    `${location.protocol}//${location.hostname}:${TTYD_PORT}/${id ? "?arg=" + encodeURIComponent(id) : ""}`;
+
+  // Everything below builds HTML strings, so everything below is escaped. The
+  // data layer bounds these strings and collapses whitespace but does not
+  // sanitise them: a title is whatever the model wrote, and status/waitingFor
+  // are foreign JSON. Control characters and the bidi overrides are dropped
+  // outright — they cannot be escaped into harmlessness, and U+202E would
+  // reverse the rest of the line it lands in.
+  const escapeHtml = (value) =>
+    String(value ?? "")
+      .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "")
+      .replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // The browser's clock is not the container's. lastActive comes from the
+  // container, so "3m ago" is measured against the server time the API reported
+  // with the same payload; without this a skewed laptop clock makes every
+  // session look hours old, or freshly touched ones land in the future.
+  let clockSkew = 0;
+
+  const ago = (epoch) => {
+    if (!Number.isFinite(epoch)) return "";
+    const seconds = Math.max(0, Math.floor(Date.now() / 1000 + clockSkew - epoch));
+    for (const [suffix, size] of [["d", 86400], ["h", 3600], ["m", 60]]) {
+      if (seconds >= size) return `${Math.floor(seconds / size)}${suffix} ago`;
+    }
+    return "just now";
+  };
+
+  // Tokens only: the real context window is never recorded in a transcript, so
+  // any percentage here would be measured against a guess.
+  const contextLabel = (session) => {
+    const tokens = session.contextTokens;
+    if (!Number.isFinite(tokens) || tokens <= 0) return "";
+    if (tokens < 1000) return `${tokens} ctx`;
+    if (tokens < 10000) return `${(tokens / 1000).toFixed(1)}k ctx`;
+    return `${Math.round(tokens / 1000)}k ctx`;
+  };
+
+  // "entries", never "messages": a tool result is one of these too, so the
+  // number runs at roughly twice a human's idea of how many turns were taken.
+  const entriesLabel = (session) => {
+    const count = Number.isFinite(session.messages) ? session.messages : 0;
+    return `${count} ${count === 1 ? "entry" : "entries"}`;
+  };
+
+  // The activity is the last *completed* tool call, so it trails a live
+  // terminal by seconds — and it deliberately survives into an idle row, where
+  // "idle · 2h ago · Bash: …" says far more than "idle · 2h ago".
+  const statusLabel = (session) => {
+    const parts = [];
+    if (!session.live) {
+      parts.push("idle", ago(session.lastActive));
+    } else if (session.status === "waiting") {
+      parts.push("waiting", session.waitingFor || "input needed");
+    } else {
+      parts.push(session.status || "live");
+    }
+    if (session.activity) parts.push(session.activity);
+    return parts.filter(Boolean).join(" · ");
+  };
+
+  const rowHtml = (session, showProject) => {
+    const live = Boolean(session.live);
+    const classes = ["session"];
+    if (live) classes.push("live");
+    if (live && session.status === "waiting") classes.push("waiting");
+
+    // A derived name is not a title: "(untitled)" and a first prompt that reads
+    // "ping" both get the dimmed treatment so a real ai-title stands out.
+    const suffix = { "ai-title": "", "first-prompt": " derived" }[session.nameSource];
+    const nameClass = "name" + (suffix === undefined ? " untitled" : suffix);
+    const hint = escapeHtml(session.lastPrompt || session.name);
+    const label = escapeHtml(session.name);
+    const heading = live
+      ? `<span class="${nameClass}" title="${hint}">${label}</span>`
+      : `<a class="open ${nameClass}" href="${escapeHtml(terminalUrl(session.id))}" target="_blank" rel="noopener" title="${hint}">${label}</a>`;
+
+    // A live session cannot be deleted — the transcript is open in a running
+    // process — so the button says so rather than disappearing, which would
+    // leave the operator wondering where it went.
+    const refusal = 'disabled title="Running &mdash; close its terminal tab first"';
+    const where = showProject
+      ? `<span class="where">${escapeHtml(session.projectDir)}</span>`
+      : "";
+
+    return `<li class="${classes.join(" ")}">
+      <span class="dot" aria-hidden="true">${live ? "●" : "○"}</span>
+      ${heading}
+      <span class="meta">${escapeHtml(contextLabel(session))}</span>
+      <span class="meta">${escapeHtml(entriesLabel(session))}</span>
+      <button class="del" data-id="${escapeHtml(session.id)}" data-name="${escapeHtml(session.name)}" ${live ? refusal : ""}>delete</button>
+      <div class="sub">
+        <span class="id">${escapeHtml(String(session.id ?? "").slice(0, 8))}…</span>
+        <span class="what">${escapeHtml(statusLabel(session))}</span>${where}
+      </div>
+    </li>`;
+  };
+
+  // The listing HTML is compared before it is written: a five-second poll that
+  // replaced the DOM every time would drop keyboard focus and cancel any hover
+  // while the operator was still reading the row. Comparing the rendered HTML
+  // rather than the payload keeps the relative timestamps ticking.
+  let lastHtml = null;
+
+  const render = (sessions) => {
+    const rows = Array.isArray(sessions) ? sessions : [];
+    const projects = new Set(rows.map((session) => session.projectDir));
+    const html = rows.map((session) => rowHtml(session, projects.size > 1)).join("");
+    if (html !== lastHtml) {
+      document.getElementById("list").innerHTML = html;
+      lastHtml = html;
+    }
+
+    const live = rows.filter((session) => session.live).length;
+    document.getElementById("count").textContent =
+      rows.length ? `${rows.length} session${rows.length === 1 ? "" : "s"}${live ? ` · ${live} live` : ""}` : "";
+    document.getElementById("empty").hidden = rows.length > 0;
+  };
+
+  const refresh = async () => {
+    try {
+      // No cache-busting query string: the server matches /api/sessions exactly.
+      const response = await fetch("/api/sessions", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      if (Number.isFinite(payload.generatedAt)) {
+        clockSkew = payload.generatedAt - Date.now() / 1000;
+      }
+      render(payload.sessions);
+      document.getElementById("error").hidden = true;
+    } catch (error) {
+      // Transient while the container restarts; the next tick retries.
+      document.getElementById("error").hidden = false;
+    }
+  };
+
+  // Chained rather than setInterval: a slow reply must not stack up requests
+  // behind itself, and a backgrounded tab should not poll a listing nobody is
+  // looking at.
+  const tick = async () => {
+    if (!document.hidden) await refresh();
+    setTimeout(tick, REFRESH_MS);
+  };
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refresh();
+  });
+
+  // Delegated: the rows are rewritten wholesale, so per-row handlers would have
+  // to be reattached on every poll.
+  document.getElementById("list").addEventListener("click", async (event) => {
+    const button = event.target.closest("button.del");
+    if (!button || button.disabled) return;
+    const { id, name } = button.dataset;
+    if (!confirm(`Delete "${name}"? The conversation cannot be recovered.`)) return;
+    try {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(id)}/delete`, { method: "POST" });
+      if (!response.ok) alert(`Delete failed: ${(await response.text()).trim()}`);
+    } catch (error) {
+      alert(`Delete failed: ${error}`);
+    }
+    refresh();
+  });
+
+  document.getElementById("new").href = terminalUrl(null);
+  tick();
+</script>
+</body>
+</html>

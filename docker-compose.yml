@@ -13,12 +13,17 @@ services:
     init: true
 
     ports:
-      - 8085:8081 # Port for ttyd web terminal
+      - 8085:8081 # ttyd web terminal — one tab per session
+      - 8086:8082 # session administration page
 
     environment:
-      # TTYD credential
+      # TTYD credential (also guards the session administration page)
       TTYD_USER: "admin"
       TTYD_PASSWORD: "admin"
+
+      # Host port the terminal is published on above. The container cannot
+      # discover this itself, and the admin page needs it to build its links.
+      TTYD_PUBLIC_PORT: "8085"
 
       # Set model Claude Code launches with (sonnet/opus/fable/..)
       CLAUDE_MODEL: "opus"
@@ -34,10 +39,10 @@ services:
       # approvals persist in /home/claude/.claude/terraform-approvals.json.
       ALLOW_TERRAFORM_MODIFY: "Ask"
 
-      # Enable Claude Code Remote Control for the session and give it a name.
-      # When set, Claude launches with `--remote-control <name>` so the session
-      # is remote-controllable and appears under this name; leave unset/commented
-      # to keep Remote Control off (the default).
+      # Base name for Claude Code Remote Control. Each session appends its own
+      # suffix (slugified session title, or the head of its id), so concurrent
+      # sessions stay distinguishable. Leave unset/commented to keep Remote
+      # Control off (the default).
       REMOTE_CONTROL_NAME: "agent-box-dev"
 
       # Uncomment to disable the Playwright browser-automation plugin,

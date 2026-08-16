@@ -1,0 +1,9 @@
+# Python bytecode from running the test suite. `scripts/` is COPYd into the
+# image, so without this a local `docker build` bakes in whatever __pycache__
+# the last test run left behind. CI checkouts are clean; developer machines
+# are not.
+__pycache__/
+*.pyc
+
+# Tests live outside the image on purpose — they are run from the working tree.
+tests/

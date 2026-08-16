@@ -3,8 +3,16 @@ set -e
 
 echo "***** Starting agent container *****"
 
+# In *this* script CLAUDE_HOME is the claude user's home directory. Everything
+# downstream (launch_session.sh, sessions.py) means the state directory by that
+# name, so the two must not be confused — hence CLAUDE_STATE_DIR below, and the
+# unset: were CLAUDE_HOME ever set in the container's environment it would still
+# carry its export flag through this assignment and reach those children with a
+# value one level too high.
+unset CLAUDE_HOME
 CLAUDE_HOME=/home/claude
-mkdir -p "$CLAUDE_HOME/.claude"
+CLAUDE_STATE_DIR="$CLAUDE_HOME/.claude"
+mkdir -p "$CLAUDE_STATE_DIR"
 
 # Always refresh the operating manual from the baked-in copy so image rebuilds
 # are reflected in the volume without having to recreate it.
@@ -118,9 +126,16 @@ if (changed) fs.writeFileSync(f, JSON.stringify(s, null, 2) + "\n");
     || echo "WARN: failed to register terraform safety hook"
 
 # Install Claude Code plugins listed in plugins.txt (idempotent; runs as claude).
-# DISABLE_PLAYWRIGHT is passed explicitly: `su -` strips inherited env vars.
+# Both values are passed explicitly because `su -` is a login shell and strips
+# the inherited environment; they travel as command-prefix assignments carried
+# through the login by su's -w whitelist rather than pasted into the -c string,
+# so an apostrophe in an operator-set DISABLE_PLAYWRIGHT cannot end the quoting
+# and run the rest as root. (Same reasoning as the sessions.py launch below.)
 echo "Installing plugins from /opt/agent-box/plugins.txt..."
-su - claude -c "PLUGINS_FILE=/opt/agent-box/plugins.txt DISABLE_PLAYWRIGHT='${DISABLE_PLAYWRIGHT:-}' /opt/agent-box/scripts/install_plugins.sh" \
+PLUGINS_FILE=/opt/agent-box/plugins.txt \
+DISABLE_PLAYWRIGHT="${DISABLE_PLAYWRIGHT:-}" \
+su -w PLUGINS_FILE,DISABLE_PLAYWRIGHT \
+    - claude -c 'exec /opt/agent-box/scripts/install_plugins.sh' \
     || echo "WARN: plugin install reported problems (see output above)"
 
 echo "Starting Claude Code via ttyd..."
@@ -129,26 +144,79 @@ TTYD_USER="${TTYD_USER:-admin}"
 TTYD_PASSWORD="${TTYD_PASSWORD:-admin}"
 TTYD_TITLE="${TTYD_TITLE:-Agent Box}"
 
+# Host ports these two servers were published on. The container cannot discover
+# them itself: TTYD_PUBLIC_PORT is what the admin page builds its terminal links
+# from, and ADMIN_PUBLIC_PORT is only used for the readiness message below.
+TTYD_PUBLIC_PORT="${TTYD_PUBLIC_PORT:-8085}"
+ADMIN_PUBLIC_PORT="${ADMIN_PUBLIC_PORT:-8086}"
+
+# The three values a Claude session needs. Exported, not interpolated:
+# launch_session.sh now sits between ttyd and `su` and reads them from its own
+# environment, so ttyd's child inherits them and this script assembles no shell
+# string at all. That also removes a real flaw in the old ttyd line, which
+# pasted these into a single-quoted `su -c` string — one apostrophe in a value
+# (a Remote Control name like "Anders' box" is enough) ended the quoting and ran
+# the remainder as root, before the su. Nothing interpolated, nothing to escape.
+#
+# `export` is load-bearing even though Compose exports whatever it sets: when a
+# variable is *unset* the default below creates it fresh, and a plain assignment
+# is not inherited by ttyd's children.
+
 # Model for Claude Code, overridable via the CLAUDE_MODEL env var; defaults to "opus".
-# `su - claude` starts a login shell that strips inherited env vars, so we pass it
-# explicitly into the command string below rather than relying on inheritance.
-CLAUDE_MODEL="${CLAUDE_MODEL:-opus}"
+export CLAUDE_MODEL="${CLAUDE_MODEL:-opus}"
 
-# Terraform guard mode (No/Ask/Yes) for the terraform-guard.js hook. Passed
-# through the `su - claude` login (which strips inherited env) the same way as
-# CLAUDE_MODEL; empty/unset makes the hook fail closed (block mutating commands).
-ALLOW_TERRAFORM_MODIFY="${ALLOW_TERRAFORM_MODIFY:-}"
+# Terraform guard mode (No/Ask/Yes) for the terraform-guard.js hook. Empty/unset
+# makes the hook fail closed (block mutating commands).
+export ALLOW_TERRAFORM_MODIFY="${ALLOW_TERRAFORM_MODIFY:-}"
 
-# Remote Control session name. When set, start_claude.sh launches Claude Code with
-# `--remote-control <name>`; empty/unset leaves Remote Control off. Passed through
-# the `su - claude` login (which strips inherited env) the same way as CLAUDE_MODEL.
-REMOTE_CONTROL_NAME="${REMOTE_CONTROL_NAME:-}"
+# Remote Control base name. When set, start_claude.sh launches Claude Code with
+# `--remote-control <name>-<per-session suffix>` so concurrent sessions stay
+# distinguishable; empty/unset leaves Remote Control off.
+export REMOTE_CONTROL_NAME="${REMOTE_CONTROL_NAME:-}"
 
-# -m 1 limits ttyd to a single concurrent client so only one `claude --continue`
-# ever runs against the persisted conversation (two would corrupt the transcript).
-ttyd -p 8081 -m 1 -c "${TTYD_USER}:${TTYD_PASSWORD}" -t "titleFixed=Agent console" -W -T xterm-256color su - claude -c "cd /workspace && CLAUDE_MODEL='${CLAUDE_MODEL}' ALLOW_TERRAFORM_MODIFY='${ALLOW_TERRAFORM_MODIFY}' REMOTE_CONTROL_NAME='${REMOTE_CONTROL_NAME}' /opt/agent-box/scripts/start_claude.sh" &
+# -a lets the browser pass a session id as ?arg=<uuid>; launch_session.sh
+# validates it before anything reaches a shell. The old -m 1 cap is gone: it
+# existed to stop two clients sharing one conversation, which is now enforced
+# per session in launch_session.sh instead of by allowing only one client total.
+# (-m 0 is ttyd's documented "no limit"; note -o is --once and -O is
+# --check-origin, so neither is a typo for the other.)
+ttyd -p 8081 -a -m 0 -c "${TTYD_USER}:${TTYD_PASSWORD}" \
+    -t "titleFixed=Agent console" -W -T xterm-256color \
+    /opt/agent-box/scripts/launch_session.sh &
 
-echo "Container ready. Access Claude Code at http://localhost:8081 with username '${TTYD_USER}' and password '${TTYD_PASSWORD}'." > /var/log/container.log
+# Session administration page. Runs as `claude` because it only ever touches
+# ~/.claude, where root-owned files would break Claude Code. Supervised in a
+# loop so a crash here never costs you the terminal.
+#
+# `su -` is a login shell and clears the environment, which is why the old code
+# pasted values into the command string. It is not done that way here: the
+# `-c` string is a fixed literal with nothing interpolated into it (an
+# apostrophe in an operator-chosen TTYD_PASSWORD would otherwise break out of
+# the quoting and run as root, exactly as described above), and the values
+# travel as ordinary command-prefix assignments carried through the login by
+# su's -w whitelist. They reach python3 as environment entries that no shell
+# ever re-parses. HOME/SHELL/USER/LOGNAME/PATH are always reset by the login
+# regardless of -w, which is what we want.
+#
+# CLAUDE_STATE_DIR, not CLAUDE_HOME: see the note at the top of this script —
+# sessions.py means the state directory by that name, this script means the home.
+(
+    while true; do
+        CLAUDE_HOME="$CLAUDE_STATE_DIR" \
+        TTYD_USER="$TTYD_USER" \
+        TTYD_PASSWORD="$TTYD_PASSWORD" \
+        TTYD_PUBLIC_PORT="$TTYD_PUBLIC_PORT" \
+        SESSIONS_PORT=8082 \
+        su -w CLAUDE_HOME,TTYD_USER,TTYD_PASSWORD,TTYD_PUBLIC_PORT,SESSIONS_PORT \
+            - claude -c 'exec python3 /opt/agent-box/scripts/sessions.py' \
+            || echo "WARN: sessions.py exited; restarting in 5s"
+        sleep 5
+    done
+) &
+
+# Truncating `>`, deliberately: this is the first write of the boot and starts
+# the file fresh. start_claude.sh appends to it afterwards, once per tab.
+echo "Container ready. Sessions: http://localhost:${ADMIN_PUBLIC_PORT}  Terminal: http://localhost:${TTYD_PUBLIC_PORT} (user '${TTYD_USER}')." > /var/log/container.log
 chown claude:claude /var/log/container.log
 
 tail -f /var/log/container.log
