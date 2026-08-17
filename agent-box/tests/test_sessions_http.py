@@ -597,17 +597,17 @@ class BuildPageTest(unittest.TestCase):
         return path
 
     def test_the_placeholder_is_replaced_everywhere(self):
-        path = self.template("a __TTYD_PUBLIC_PORT__ b __TTYD_PUBLIC_PORT__")
+        path = self.template("a __AGENT_TABS_PUBLIC_PORT__ b __AGENT_TABS_PUBLIC_PORT__")
         self.assertEqual("a 9999 b 9999", sessions.build_page(path, 9999))
 
     def test_the_port_may_arrive_as_a_string(self):
         # It comes from os.environ, so it usually does.
-        path = self.template("port=__TTYD_PUBLIC_PORT__")
-        self.assertEqual("port=8085", sessions.build_page(path, "8085"))
+        path = self.template("port=__AGENT_TABS_PUBLIC_PORT__")
+        self.assertEqual("port=8091", sessions.build_page(path, "8091"))
 
     def test_a_template_without_the_placeholder_is_returned_unchanged(self):
         path = self.template("<p>no port here</p>")
-        self.assertEqual("<p>no port here</p>", sessions.build_page(path, 8085))
+        self.assertEqual("<p>no port here</p>", sessions.build_page(path, 8091))
 
 
 class PageTitleTest(unittest.TestCase):
@@ -627,7 +627,7 @@ class PageTitleTest(unittest.TestCase):
         path = os.path.join(self.directory, "page.html")
         with open(path, "w", encoding="utf-8") as handle:
             handle.write("<title>__PAGE_TITLE__</title>")
-        built = sessions.build_page(path, 8085, box_name)
+        built = sessions.build_page(path, 8091, box_name)
         return built[len("<title>"): -len("</title>")]
 
     def test_the_box_name_becomes_the_tab_name(self):
@@ -686,7 +686,7 @@ globalThis.__nodes = nodes;
 """
 
 
-def built_page(port=8085):
+def built_page(port=sessions.DEFAULT_TABS_PUBLIC_PORT):
     return sessions.build_page(TEMPLATE, port)
 
 
@@ -819,7 +819,7 @@ class PageTemplateTest(unittest.TestCase):
     def test_the_public_port_is_baked_into_the_page(self):
         page = built_page(9999)
         self.assertIn("9999", page)
-        self.assertNotIn("__TTYD_PUBLIC_PORT__", page)
+        self.assertNotIn("__AGENT_TABS_PUBLIC_PORT__", page)
         self.assertIn("/api/sessions", page)
 
     def test_the_page_has_a_title_and_no_placeholder_left_in_it(self):
@@ -879,7 +879,7 @@ class PageServedTest(ServerTestCase):
         self.home = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
         self.store = session_store.SessionStore(self.home)
-        self.page = built_page(8085)
+        self.page = built_page()
         self.serve(self.store, (USER, PASSWORD), page=self.page)
 
     def test_the_page_comes_back_intact_as_html(self):
@@ -1015,7 +1015,7 @@ class NodeRenderTest(unittest.TestCase):
     def test_an_idle_session_links_to_its_own_terminal(self):
         markup = self.render([self.session()])
         self.assertIn(
-            'href="http://box.example:8085/?arg=%s"' % SESSION_A, markup
+            'href="http://box.example:8091/?arg=%s"' % SESSION_A, markup
         )
         self.assertIn('target="_blank"', markup)
         self.assertIn('rel="noopener"', markup)

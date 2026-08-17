@@ -87,12 +87,14 @@ RUN chmod +x /opt/agent-box/scripts/*.sh \
 COPY CLAUDE.md /opt/agent-box/claude-home/CLAUDE.md
 COPY skills/ /opt/agent-box/claude-home/skills/
 
-# Healthy = ttyd answers HTTP on 8081 and the admin page answers on 8082. No -f
-# on the ttyd probe: it uses basic auth, so an unauthenticated request gets 401 —
-# any HTTP response means the terminal is up. /healthz needs no auth, so it can
-# be checked properly. Generous start period: ep.sh installs plugins first.
+# Healthy = ttyd answers HTTP on 8091 (agent tabs) and the session list answers
+# on 8090. No -f on the ttyd probe: it uses basic auth, so an unauthenticated
+# request gets 401 — any HTTP response means the terminal is up. /healthz needs
+# no auth, so it can be checked properly. Generous start period: ep.sh installs
+# plugins first. These are the container-side ports, which are also the default
+# host ports; test_ports.py pins them against ep.sh and docker-compose.yml.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
-    CMD curl -s -o /dev/null http://localhost:8081 \
-        && curl -sf -o /dev/null http://localhost:8082/healthz || exit 1
+    CMD curl -s -o /dev/null http://localhost:8091 \
+        && curl -sf -o /dev/null http://localhost:8090/healthz || exit 1
 
 ENTRYPOINT ["/ep.sh"]

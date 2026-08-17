@@ -119,6 +119,20 @@ class Handler(BaseHTTPRequestHandler):
 # What the browser tab is called when the deployment has no name of its own.
 DEFAULT_PAGE_TITLE = "Agent Box sessions"
 
+# The port this server listens on inside the container, and the host port it
+# tells the page the agent tabs are published on. They are separate numbers for
+# separate surfaces — the session list and the terminal — and each is the same
+# on the host side as on the container side by default, so a compose mapping has
+# no side to get backwards. ep.sh sets both explicitly; these defaults are what
+# a hand-started server, or a deployment that leaves the variable out, gets.
+#
+# The second one is the only value on this page the container cannot work out
+# for itself: docker publishes ports on the host side, and nothing in here can
+# see that. Get it wrong and every link on the page points at a port this box
+# does not answer on — see test_ports.py for what that failure looks like.
+DEFAULT_LISTEN_PORT = 8090
+DEFAULT_TABS_PUBLIC_PORT = 8091
+
 # One line of a title bar. The name comes from docker-compose.yml or from
 # `docker inspect`, so this is not a security boundary — but it is foreign text
 # going into markup, and a multi-line or endless one would be no more useful in
@@ -141,7 +155,7 @@ def page_title(agent_name):
     return "Sessions: %s" % name[:_TITLE_LIMIT]
 
 
-def build_page(template_path, ttyd_public_port, agent_name=""):
+def build_page(template_path, agent_tabs_public_port, agent_name=""):
     """Load the UI, baking in what the container cannot discover for itself.
 
     The published port is one such thing — docker publishes it on the host side
@@ -149,9 +163,9 @@ def build_page(template_path, ttyd_public_port, agent_name=""):
     """
     with open(template_path, encoding="utf-8") as handle:
         page = handle.read()
-    return page.replace("__TTYD_PUBLIC_PORT__", str(ttyd_public_port)).replace(
-        "__PAGE_TITLE__", html.escape(page_title(agent_name))
-    )
+    return page.replace(
+        "__AGENT_TABS_PUBLIC_PORT__", str(agent_tabs_public_port)
+    ).replace("__PAGE_TITLE__", html.escape(page_title(agent_name)))
 
 
 def configure_logging():
@@ -178,7 +192,7 @@ def main():
     Handler.store = SessionStore(claude_home)
     Handler.page = build_page(
         os.path.join(here, "sessions_page.html"),
-        os.environ.get("TTYD_PUBLIC_PORT", "8085"),
+        os.environ.get("AGENT_TABS_PUBLIC_PORT") or DEFAULT_TABS_PUBLIC_PORT,
         os.environ.get("AGENT_NAME", ""),
     )
     Handler.credential = (
@@ -186,7 +200,7 @@ def main():
         os.environ.get("TTYD_PASSWORD", ""),
     )
 
-    port = int(os.environ.get("SESSIONS_PORT") or 8082)
+    port = int(os.environ.get("SESSIONS_PORT") or DEFAULT_LISTEN_PORT)
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 

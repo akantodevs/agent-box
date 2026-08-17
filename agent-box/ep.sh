@@ -145,10 +145,15 @@ TTYD_USER="${TTYD_USER:-admin}"
 TTYD_PASSWORD="${TTYD_PASSWORD:-admin}"
 
 # Host ports these two servers were published on. The container cannot discover
-# them itself: TTYD_PUBLIC_PORT is what the admin page builds its terminal links
-# from, and ADMIN_PUBLIC_PORT is only used for the readiness message below.
-TTYD_PUBLIC_PORT="${TTYD_PUBLIC_PORT:-8085}"
-ADMIN_PUBLIC_PORT="${ADMIN_PUBLIC_PORT:-8086}"
+# them itself — docker publishes ports on the host side — so the compose file
+# passes them in: AGENT_TABS_PUBLIC_PORT is what the session list builds its tab
+# links from, and SESSION_LIST_PUBLIC_PORT is only used for the readiness message
+# below. Each defaults to the container port the same server listens on, which is
+# what a deployment that publishes them straight through (8090:8090, 8091:8091)
+# gets; a deployment that remaps either one has to say so, or the session list
+# hands out links to a port this box does not answer on.
+AGENT_TABS_PUBLIC_PORT="${AGENT_TABS_PUBLIC_PORT:-8091}"
+SESSION_LIST_PUBLIC_PORT="${SESSION_LIST_PUBLIC_PORT:-8090}"
 
 # The values a Claude session needs. Exported, not interpolated:
 # launch_session.sh now sits between ttyd and `su` and reads them from its own
@@ -205,7 +210,7 @@ echo "This box is called '${AGENT_NAME}' (set AGENT_NAME to change it)."
 # hands its client the window title "<command> (<hostname>)" and the client
 # appends it to the tab's own name, so the command is user-visible text: the
 # short name is there to keep that tail readable.
-ttyd -p 8081 -a -m 0 -c "${TTYD_USER}:${TTYD_PASSWORD}" \
+ttyd -p 8091 -a -m 0 -c "${TTYD_USER}:${TTYD_PASSWORD}" \
     -W -T xterm-256color \
     agent-session &
 
@@ -230,10 +235,10 @@ ttyd -p 8081 -a -m 0 -c "${TTYD_USER}:${TTYD_PASSWORD}" \
         CLAUDE_HOME="$CLAUDE_STATE_DIR" \
         TTYD_USER="$TTYD_USER" \
         TTYD_PASSWORD="$TTYD_PASSWORD" \
-        TTYD_PUBLIC_PORT="$TTYD_PUBLIC_PORT" \
+        AGENT_TABS_PUBLIC_PORT="$AGENT_TABS_PUBLIC_PORT" \
         AGENT_NAME="$AGENT_NAME" \
-        SESSIONS_PORT=8082 \
-        su -w CLAUDE_HOME,TTYD_USER,TTYD_PASSWORD,TTYD_PUBLIC_PORT,AGENT_NAME,SESSIONS_PORT \
+        SESSIONS_PORT=8090 \
+        su -w CLAUDE_HOME,TTYD_USER,TTYD_PASSWORD,AGENT_TABS_PUBLIC_PORT,AGENT_NAME,SESSIONS_PORT \
             - claude -c 'exec python3 /opt/agent-box/scripts/sessions.py' \
             || echo "WARN: sessions.py exited; restarting in 5s"
         sleep 5
@@ -242,7 +247,7 @@ ttyd -p 8081 -a -m 0 -c "${TTYD_USER}:${TTYD_PASSWORD}" \
 
 # Truncating `>`, deliberately: this is the first write of the boot and starts
 # the file fresh. start_claude.sh appends to it afterwards, once per tab.
-echo "Container ready. Sessions: http://localhost:${ADMIN_PUBLIC_PORT}  Terminal: http://localhost:${TTYD_PUBLIC_PORT} (user '${TTYD_USER}')." > /var/log/container.log
+echo "Container ready. Sessions: http://localhost:${SESSION_LIST_PUBLIC_PORT}  Terminal: http://localhost:${AGENT_TABS_PUBLIC_PORT} (user '${TTYD_USER}')." > /var/log/container.log
 chown claude:claude /var/log/container.log
 
 tail -f /var/log/container.log

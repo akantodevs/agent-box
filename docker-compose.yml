@@ -11,10 +11,9 @@ services:
     image: agent-box:latest
     container_name: agent-box-dev
     init: true
-
     ports:
-      - 8085:8081 # ttyd web terminal — one tab per session
-      - 8086:8082 # session administration page
+      - 8095:8090 # session list (admin page)
+      - 8096:8091 # Agent tabs
 
     environment:
       # What this box is called, in browser tabs: the session administration
@@ -27,9 +26,9 @@ services:
       TTYD_USER: "admin"
       TTYD_PASSWORD: "admin"
 
-      # Host port the terminal is published on above. The container cannot
-      # discover this itself, and the admin page needs it to build its links.
-      TTYD_PUBLIC_PORT: "8085"
+      # If you change default ports, please provide them here
+      SESSION_LIST_PUBLIC_PORT: 8095
+      AGENT_TABS_PUBLIC_PORT: 8096
 
       # Set model Claude Code launches with (sonnet/opus/fable/..)
       CLAUDE_MODEL: "opus"

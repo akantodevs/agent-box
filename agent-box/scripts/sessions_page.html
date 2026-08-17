@@ -87,13 +87,13 @@
 </main>
 
 <script>
-  // The container cannot know which host port the terminal was published on, so
-  // the port is baked in at startup and the hostname comes from the browser.
-  const TTYD_PORT = "__TTYD_PUBLIC_PORT__";
+  // The container cannot know which host port the agent tabs were published on,
+  // so the port is baked in at startup and the hostname comes from the browser.
+  const AGENT_TABS_PORT = "__AGENT_TABS_PUBLIC_PORT__";
   const REFRESH_MS = 5000;
 
   const terminalUrl = (id) =>
-    `${location.protocol}//${location.hostname}:${TTYD_PORT}/${id ? "?arg=" + encodeURIComponent(id) : ""}`;
+    `${location.protocol}//${location.hostname}:${AGENT_TABS_PORT}/${id ? "?arg=" + encodeURIComponent(id) : ""}`;
 
   // Everything below builds HTML strings, so everything below is escaped. The
   // data layer bounds these strings and collapses whitespace but does not

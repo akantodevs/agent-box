@@ -27,7 +27,8 @@ below. Nothing else will stop you.
   subdirectory, `/workspace/<service>`. **Editing `/workspace/<service>` changes the
   code that service runs.**
 - **Sessions:** the container runs one Claude Code session per browser tab, not one
-  overall. The session administration page (published on host port 8086 by default)
+  overall. The session administration page (published on host port 8090 by default,
+  with the session tabs on 8091)
   lists every session in the state volume and opens each in its own tab; the terminal
   port resumes whichever session its URL names, and starts a new one when it names
   none. Two tabs cannot share one session — the launcher refuses the second, because
