@@ -17,6 +17,12 @@ services:
       - 8086:8082 # session administration page
 
     environment:
+      # What this box is called, in browser tabs: the session administration
+      # page is titled "Sessions: <name>", and every session tab ends in it —
+      # which is how you tell two agent-boxes apart. Leave it out and the
+      # container's own name is used (falling back to the hostname).
+      AGENT_NAME: "agent-box-dev"
+
       # TTYD credential (also guards the session administration page)
       TTYD_USER: "admin"
       TTYD_PASSWORD: "admin"

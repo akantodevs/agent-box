@@ -78,9 +78,9 @@ class StartTestCase(unittest.TestCase):
         """A clean environment for the script.
 
         Every variable the script reads is set explicitly: the test runner is
-        itself a Claude Code session, so CLAUDE_MODEL, REMOTE_CONTROL_NAME and
-        CLAUDE_HOME are all plausibly set in the inherited environment and would
-        otherwise decide the results.
+        itself a Claude Code session, so CLAUDE_MODEL, REMOTE_CONTROL_NAME,
+        AGENT_NAME and CLAUDE_HOME are all plausibly set in the inherited
+        environment and would otherwise decide the results.
         """
         env = dict(os.environ)
         env.update(
@@ -95,6 +95,7 @@ class StartTestCase(unittest.TestCase):
         env.pop("CLAUDE_MODEL", None)
         env.pop("REMOTE_CONTROL_NAME", None)
         env.pop("ALLOW_TERRAFORM_MODIFY", None)
+        env.pop("AGENT_NAME", None)
         for key, value in overrides.items():
             if value is None:
                 env.pop(key, None)
@@ -409,6 +410,78 @@ class EnvironmentTest(StartTestCase):
 
     def test_playwright_browsers_path_is_exported(self):
         self.assertEqual("/ms-playwright", self._exported("PLAYWRIGHT_BROWSERS_PATH"))
+
+    def test_the_box_name_is_exported(self):
+        """The tab-title watcher reads it from the environment, and it arrives
+        here as a command-prefix assignment from launch_session.sh."""
+        self.assertEqual("agent-box-dev",
+                         self._exported("AGENT_NAME", AGENT_NAME="agent-box-dev"))
+
+    def test_the_box_name_is_exported_empty_when_unset(self):
+        self.assertEqual("", self._exported("AGENT_NAME", AGENT_NAME=None))
+
+    def test_claude_does_not_title_the_terminal_itself(self):
+        """Two writers, one title bar: Claude Code renames the terminal after
+        whatever it is doing, which would overwrite the session name the tab is
+        there to show. The tab is named by session_title.py, so this is off."""
+        self.assertEqual("1", self._exported("CLAUDE_CODE_DISABLE_TERMINAL_TITLE"))
+
+
+class TabTitleTest(StartTestCase):
+    """The terminal is named after the session before Claude takes it over.
+
+    The watcher is backgrounded and writes to this script's stdout, which is the
+    pty in the container and a pipe here — so the escape sequence it writes is
+    visible to these tests exactly as ttyd's client sees it.
+    """
+
+    # Like CLAUDE_STUB, but alive for a moment. start_claude.sh backgrounds the
+    # watcher and immediately execs claude; a stub that exits in microseconds
+    # would routinely be gone before the watcher's first write, which is a race
+    # only the test has (a real session lasts minutes).
+    SLOW_CLAUDE_STUB = """#!/bin/sh
+printf '%s\\0' "$@" > "$CLAUDE_ARGV_FILE"
+sleep 1
+exit 0
+"""
+
+    def setUp(self):
+        super().setUp()
+        stub = os.path.join(self.bin, "claude")
+        with open(stub, "w", encoding="utf-8") as handle:
+            handle.write(self.SLOW_CLAUDE_STUB)
+        os.chmod(stub, 0o755)
+
+    def title(self, result):
+        """The last OSC title written to the terminal, or None."""
+        found = re.findall(r"\033\]0;(.*?)\007", result.stdout.decode("utf-8", "replace"))
+        return found[-1] if found else None
+
+    def test_a_resumed_session_names_the_tab_after_itself(self):
+        write_transcript(self.home, SESSION_A, [ai_title(TITLE)])
+        result = self.run_script(SESSION_A)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("Agent: " + TITLE, self.title(result))
+
+    def test_a_new_session_says_so_until_it_has_a_name(self):
+        result = self.run_script()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("Agent: new session", self.title(result))
+
+    def test_the_box_name_is_on_the_end_of_the_tab_name(self):
+        write_transcript(self.home, SESSION_A, [ai_title(TITLE)])
+        result = self.run_script(SESSION_A, AGENT_NAME="agent-box-dev")
+        self.assertEqual("Agent: %s · agent-box-dev" % TITLE, self.title(result))
+
+    def test_the_terminal_carries_nothing_but_the_title_sequence(self):
+        """Whatever else the watcher has to say, it does not say it here.
+
+        This stdout is the terminal Claude Code is about to draw on: a stray
+        line from a background process would land in the middle of its UI.
+        """
+        write_transcript(self.home, SESSION_A, [ai_title(TITLE)])
+        result = self.run_script(SESSION_A)
+        self.assertEqual("\033]0;Agent: %s\007" % TITLE, result.stdout.decode())
 
 
 if __name__ == "__main__":

@@ -59,7 +59,7 @@ exit 0
 """
 
 # Records what the `su -c` command string actually did: the arguments it passed
-# to start_claude.sh, and the three env values it set. Written by eval_command().
+# to start_claude.sh, and the env values it set. Written by eval_command().
 # NUL-separated records, because a value that contains a newline is exactly one
 # of the things these tests are here to pin.
 START_CLAUDE_STUB = """#!/bin/sh
@@ -70,6 +70,7 @@ START_CLAUDE_STUB = """#!/bin/sh
     printf 'CLAUDE_MODEL=%s\\0' "$CLAUDE_MODEL"
     printf 'ALLOW_TERRAFORM_MODIFY=%s\\0' "$ALLOW_TERRAFORM_MODIFY"
     printf 'REMOTE_CONTROL_NAME=%s\\0' "$REMOTE_CONTROL_NAME"
+    printf 'AGENT_NAME=%s\\0' "$AGENT_NAME"
 } > "$LAUNCH_RECORD"
 """
 
@@ -182,6 +183,7 @@ class LaunchTestCase(unittest.TestCase):
                 "CLAUDE_MODEL": "",
                 "ALLOW_TERRAFORM_MODIFY": "",
                 "REMOTE_CONTROL_NAME": "",
+                "AGENT_NAME": "",
             }
         )
         for key, value in overrides.items():
@@ -245,7 +247,8 @@ class LaunchTestCase(unittest.TestCase):
         self.assertNotIn(REAL_START_CLAUDE, command)
         env = dict(os.environ)
         env["LAUNCH_RECORD"] = self.launch_record
-        for key in ("CLAUDE_MODEL", "ALLOW_TERRAFORM_MODIFY", "REMOTE_CONTROL_NAME"):
+        for key in ("CLAUDE_MODEL", "ALLOW_TERRAFORM_MODIFY", "REMOTE_CONTROL_NAME",
+                    "AGENT_NAME"):
             env.pop(key, None)
         done = subprocess.run(
             ["/bin/sh", "-c", command],
@@ -343,7 +346,7 @@ class ResumeTest(LaunchTestCase):
 
 
 class EnvironmentTest(LaunchTestCase):
-    """The three values `su -` strips and this script therefore carries over."""
+    """The values `su -` strips and this script therefore carries over."""
 
     def test_environment_is_passed_through(self):
         write_transcript(self.home, SESSION_A, [])
@@ -352,24 +355,31 @@ class EnvironmentTest(LaunchTestCase):
             CLAUDE_MODEL="sonnet",
             ALLOW_TERRAFORM_MODIFY="Ask",
             REMOTE_CONTROL_NAME="agent-box-one",
+            AGENT_NAME="agent-box-dev",
         )
         command = self.launched_command(result)
         self.assertIn("CLAUDE_MODEL=", command)
         self.assertIn("ALLOW_TERRAFORM_MODIFY=", command)
         self.assertIn("REMOTE_CONTROL_NAME=", command)
+        self.assertIn("AGENT_NAME=", command)
         record = self.eval_command(command)
         self.assertEqual("sonnet", record["CLAUDE_MODEL"])
         self.assertEqual("Ask", record["ALLOW_TERRAFORM_MODIFY"])
         self.assertEqual("agent-box-one", record["REMOTE_CONTROL_NAME"])
+        self.assertEqual("agent-box-dev", record["AGENT_NAME"])
 
     def test_unset_environment_arrives_empty(self):
         result = self.run_script(
-            CLAUDE_MODEL=None, ALLOW_TERRAFORM_MODIFY=None, REMOTE_CONTROL_NAME=None
+            CLAUDE_MODEL=None,
+            ALLOW_TERRAFORM_MODIFY=None,
+            REMOTE_CONTROL_NAME=None,
+            AGENT_NAME=None,
         )
         record = self.eval_command(self.launched_command(result))
         self.assertEqual("", record["CLAUDE_MODEL"])
         self.assertEqual("", record["ALLOW_TERRAFORM_MODIFY"])
         self.assertEqual("", record["REMOTE_CONTROL_NAME"])
+        self.assertEqual("", record["AGENT_NAME"])
 
     def test_a_quote_in_an_environment_value_cannot_break_out(self):
         # These come from docker-compose.yml rather than from a URL, but they

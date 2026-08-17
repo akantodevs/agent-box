@@ -19,6 +19,20 @@ CONTAINER_LOG="${AGENT_BOX_LOG:-/var/log/container.log}"
 export DISABLE_AUTOUPDATER=1                  # image owns the CLI version
 export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright # where the baked Chromium lives
 
+# The terminal's title is this box's way of naming browser tabs (see
+# session_title.py at the bottom of this script), and Claude Code otherwise
+# renames the terminal after whatever it is currently doing — so the tab would
+# show the last tool call rather than which session it is. One writer only.
+export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
+
+# What this box is called (resolved once at boot by agent_name.sh, passed
+# through the `su - claude` login by launch_session.sh). The tab-title watcher
+# puts it after the session name, which is what tells two boxes' tabs apart.
+# Exported rather than left as a plain assignment so that watcher — a child of
+# this script — inherits it; empty means an unnamed box, and the tab then
+# carries the session name alone.
+export AGENT_NAME="${AGENT_NAME:-}"
+
 # Terraform guard mode (No/Ask/Yes), consumed by the terraform-guard.js hook.
 # Exported here so the hook subprocess Claude spawns inherits it; launch_session.sh
 # passes it through the `su - claude` login. Defaults to empty -> the hook fails
@@ -93,6 +107,19 @@ if [ -n "${REMOTE_CONTROL_NAME:-}" ]; then
     fi
     REMOTE_CONTROL_ARGS=(--remote-control "$RC_NAME")
 fi
+
+# Name the browser tab after the session. ttyd runs without a fixed title, so an
+# OSC title written to this terminal becomes the tab's name — which is the only
+# way to tell a browser full of session tabs apart. The watcher stays for the
+# life of the session because the name does not: a new session is "new session"
+# until Claude Code titles it, several turns in.
+#
+# Backgrounded before the exec below, and deliberately so: the exec keeps this
+# pid, so the watcher's parent becomes the Claude process itself and it ends
+# with it. stderr is discarded because this terminal belongs to Claude Code's
+# UI — a tab that fails to get a name is a cosmetic loss, a python traceback
+# drawn across the session is not.
+python3 "$SCRIPTS/session_title.py" "$SESSION_ID" 2>/dev/null &
 
 exec claude --model "$MODEL" "${SESSION_ARGS[@]}" \
     --dangerously-skip-permissions "${REMOTE_CONTROL_ARGS[@]}"

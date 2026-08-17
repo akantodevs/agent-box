@@ -662,6 +662,21 @@ def slugify(text, limit=32):
     return slug[:limit].strip("-")
 
 
+def transcript_for(claude_home, session_id):
+    """Path of this session's transcript, or None when it has none yet.
+
+    Public because session_title.py needs the file itself rather than a parse
+    of it: it stats the path to know whether re-reading could change anything.
+    A session legitimately has no transcript for the first moments of its life
+    — Claude Code writes the file when the conversation starts, not when the
+    process does.
+    """
+    for _project_dir, found_id, path in _iter_transcripts(claude_home):
+        if found_id == session_id:
+            return path
+    return None
+
+
 def slug_for(claude_home, session_id):
     """Slug of a session's ai-title, or '' when it has none yet.
 
@@ -673,11 +688,11 @@ def slug_for(claude_home, session_id):
     and nameSource is exactly the discriminator for that. '' lets the caller
     fall back to the uuid, which identifies the session better than "ping" does.
     """
-    for _project_dir, found_id, path in _iter_transcripts(claude_home):
-        if found_id == session_id:
-            parsed = parse_transcript(path)
-            return slugify(parsed["name"]) if parsed["nameSource"] == "ai-title" else ""
-    return ""
+    path = transcript_for(claude_home, session_id)
+    if path is None:
+        return ""
+    parsed = parse_transcript(path)
+    return slugify(parsed["name"]) if parsed["nameSource"] == "ai-title" else ""
 
 
 def _cli(argv):

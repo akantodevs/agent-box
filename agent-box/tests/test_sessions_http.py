@@ -610,6 +610,49 @@ class BuildPageTest(unittest.TestCase):
         self.assertEqual("<p>no port here</p>", sessions.build_page(path, 8085))
 
 
+class PageTitleTest(unittest.TestCase):
+    """The name of the browser tab this page is open in.
+
+    An operator with several boxes open has several of these tabs, and they are
+    otherwise identical. The name is AGENT_NAME, resolved once at boot by
+    agent_name.sh — from the operator's own setting, the container's name, or
+    the hostname — so this page is never handed nothing to be called.
+    """
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
+
+    def title(self, box_name):
+        path = os.path.join(self.directory, "page.html")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("<title>__PAGE_TITLE__</title>")
+        built = sessions.build_page(path, 8085, box_name)
+        return built[len("<title>"): -len("</title>")]
+
+    def test_the_box_name_becomes_the_tab_name(self):
+        self.assertEqual("Sessions: agent-box-dev", self.title("agent-box-dev"))
+
+    def test_a_box_with_no_name_keeps_the_generic_one(self):
+        # Only reachable when even the hostname lookup failed, but a title bar
+        # reading "Sessions: " would be worse than the generic name.
+        for value in ("", None, "   "):
+            with self.subTest(value=value):
+                self.assertEqual("Agent Box sessions", self.title(value))
+
+    def test_the_name_is_escaped_on_its_way_into_the_markup(self):
+        # It comes from docker-compose.yml or from `docker inspect` rather than
+        # from a browser, but it is foreign text going into HTML, and this page
+        # is a public image.
+        title = self.title('</title><script>alert(1)</script>')
+        self.assertNotIn("<script>", title)
+        self.assertNotIn("</title>", title)
+
+    def test_the_name_is_one_bounded_line(self):
+        self.assertEqual("Sessions: a b", self.title("a\n b"))
+        self.assertLessEqual(len(self.title("x" * 500)), 100)
+
+
 TEMPLATE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "scripts", "sessions_page.html"
 )
@@ -778,6 +821,11 @@ class PageTemplateTest(unittest.TestCase):
         self.assertIn("9999", page)
         self.assertNotIn("__TTYD_PUBLIC_PORT__", page)
         self.assertIn("/api/sessions", page)
+
+    def test_the_page_has_a_title_and_no_placeholder_left_in_it(self):
+        page = built_page()
+        self.assertNotIn("__PAGE_TITLE__", page)
+        self.assertIn("<title>Agent Box sessions</title>", page)
 
     def test_the_terminal_url_is_built_from_the_browsers_hostname(self):
         # Only the port can be baked in: the container has no idea what

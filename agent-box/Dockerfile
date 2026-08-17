@@ -70,7 +70,13 @@ RUN chmod +x /ep.sh
 # Plugin bootstrap: list + installer script
 COPY plugins.txt /opt/agent-box/plugins.txt
 COPY scripts/ /opt/agent-box/scripts/
-RUN chmod +x /opt/agent-box/scripts/*.sh
+RUN chmod +x /opt/agent-box/scripts/*.sh \
+# The name ttyd is started under, and the only reason this link exists: ttyd
+# tells its client the window title "<command> (<hostname>)", and the client
+# appends that to the tab's own title. The command is therefore user-visible
+# text in every terminal tab, and a full path to a shell script is not what
+# anyone wants at the end of it. ep.sh runs the session launcher through here.
+    && ln -s /opt/agent-box/scripts/launch_session.sh /usr/local/bin/agent-session
 
 # Bake the content the image owns inside ~/.claude, laid out exactly as it lands there.
 # ep.sh runs sync_claude_home.sh on every startup to copy this into the claude-data

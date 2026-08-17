@@ -143,7 +143,6 @@ echo "Starting Claude Code via ttyd..."
 
 TTYD_USER="${TTYD_USER:-admin}"
 TTYD_PASSWORD="${TTYD_PASSWORD:-admin}"
-TTYD_TITLE="${TTYD_TITLE:-Agent Box}"
 
 # Host ports these two servers were published on. The container cannot discover
 # them itself: TTYD_PUBLIC_PORT is what the admin page builds its terminal links
@@ -151,7 +150,7 @@ TTYD_TITLE="${TTYD_TITLE:-Agent Box}"
 TTYD_PUBLIC_PORT="${TTYD_PUBLIC_PORT:-8085}"
 ADMIN_PUBLIC_PORT="${ADMIN_PUBLIC_PORT:-8086}"
 
-# The three values a Claude session needs. Exported, not interpolated:
+# The values a Claude session needs. Exported, not interpolated:
 # launch_session.sh now sits between ttyd and `su` and reads them from its own
 # environment, so ttyd's child inherits them and this script assembles no shell
 # string at all. That also removes a real flaw in the old ttyd line, which
@@ -175,15 +174,40 @@ export ALLOW_TERRAFORM_MODIFY="${ALLOW_TERRAFORM_MODIFY:-}"
 # distinguishable; empty/unset leaves Remote Control off.
 export REMOTE_CONTROL_NAME="${REMOTE_CONTROL_NAME:-}"
 
+# What this box is called, in browser tabs: the session administration page is
+# titled "Sessions: <name>" and every session tab ends in it, which is how an
+# operator with two agent-boxes open tells them apart.
+#
+# Resolved once, here, rather than per session or per page load: the lookup
+# talks to Docker, and neither the admin page (running as `claude`) nor a
+# session should have to repeat it — or cope with it failing. agent_name.sh
+# prefers the operator's AGENT_NAME, falls back to the container's name, then
+# to the hostname; see that script for why each one is where it is.
+# `|| true` because this whole script runs under `set -e`: a name lookup is
+# never a reason not to boot a container.
+export AGENT_NAME="$(/opt/agent-box/scripts/agent_name.sh || true)"
+echo "This box is called '${AGENT_NAME}' (set AGENT_NAME to change it)."
+
 # -a lets the browser pass a session id as ?arg=<uuid>; launch_session.sh
 # validates it before anything reaches a shell. The old -m 1 cap is gone: it
 # existed to stop two clients sharing one conversation, which is now enforced
 # per session in launch_session.sh instead of by allowing only one client total.
 # (-m 0 is ttyd's documented "no limit"; note -o is --once and -O is
 # --check-origin, so neither is a typo for the other.)
+#
+# There is deliberately no `-t titleFixed=...` here any more. A fixed title is
+# exactly that — every tab in the browser called the same thing, which with one
+# session per tab is the same as having no names at all. Without it ttyd's
+# client adopts whatever OSC title the terminal is sent, and session_title.py
+# (started per session by start_claude.sh) sends "Agent: <session name>".
+#
+# agent-session is a symlink to launch_session.sh, made in the Dockerfile. ttyd
+# hands its client the window title "<command> (<hostname>)" and the client
+# appends it to the tab's own name, so the command is user-visible text: the
+# short name is there to keep that tail readable.
 ttyd -p 8081 -a -m 0 -c "${TTYD_USER}:${TTYD_PASSWORD}" \
-    -t "titleFixed=Agent console" -W -T xterm-256color \
-    /opt/agent-box/scripts/launch_session.sh &
+    -W -T xterm-256color \
+    agent-session &
 
 # Session administration page. Runs as `claude` because it only ever touches
 # ~/.claude, where root-owned files would break Claude Code. Supervised in a
@@ -207,8 +231,9 @@ ttyd -p 8081 -a -m 0 -c "${TTYD_USER}:${TTYD_PASSWORD}" \
         TTYD_USER="$TTYD_USER" \
         TTYD_PASSWORD="$TTYD_PASSWORD" \
         TTYD_PUBLIC_PORT="$TTYD_PUBLIC_PORT" \
+        AGENT_NAME="$AGENT_NAME" \
         SESSIONS_PORT=8082 \
-        su -w CLAUDE_HOME,TTYD_USER,TTYD_PASSWORD,TTYD_PUBLIC_PORT,SESSIONS_PORT \
+        su -w CLAUDE_HOME,TTYD_USER,TTYD_PASSWORD,TTYD_PUBLIC_PORT,AGENT_NAME,SESSIONS_PORT \
             - claude -c 'exec python3 /opt/agent-box/scripts/sessions.py' \
             || echo "WARN: sessions.py exited; restarting in 5s"
         sleep 5

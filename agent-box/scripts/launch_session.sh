@@ -209,6 +209,7 @@ launch() {
 && CLAUDE_MODEL=$(quote "${CLAUDE_MODEL:-}") \
 ALLOW_TERRAFORM_MODIFY=$(quote "${ALLOW_TERRAFORM_MODIFY:-}") \
 REMOTE_CONTROL_NAME=$(quote "${REMOTE_CONTROL_NAME:-}") \
+AGENT_NAME=$(quote "${AGENT_NAME:-}") \
 $SCRIPTS/start_claude.sh $1" <&3 3<&- &
     SESSION_PID=$!
 

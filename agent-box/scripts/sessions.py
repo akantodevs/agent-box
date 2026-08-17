@@ -9,6 +9,7 @@ break Claude Code itself.
 
 import base64
 import hmac
+import html
 import json
 import logging
 import os
@@ -115,13 +116,42 @@ class Handler(BaseHTTPRequestHandler):
         pass  # the container log is for the terminal, not for every poll
 
 
-def build_page(template_path, ttyd_public_port):
-    """Load the UI, baking in the host port the terminal was published on.
+# What the browser tab is called when the deployment has no name of its own.
+DEFAULT_PAGE_TITLE = "Agent Box sessions"
 
-    The container cannot discover its own published port, so it is told.
+# One line of a title bar. The name comes from docker-compose.yml or from
+# `docker inspect`, so this is not a security boundary — but it is foreign text
+# going into markup, and a multi-line or endless one would be no more useful in
+# a tab than in the page.
+_TITLE_LIMIT = 60
+
+
+def page_title(agent_name):
+    """The browser tab's name for this box's session list.
+
+    The name is AGENT_NAME, which ep.sh resolves once at boot (see
+    agent_name.sh): the operator's own setting, else the container's name, else
+    the hostname. It is what an operator with two boxes open tells these
+    otherwise identical tabs apart by, so falling all the way back to the
+    generic title means every one of those lookups failed.
+    """
+    name = " ".join(agent_name.split()) if isinstance(agent_name, str) else ""
+    if not name:
+        return DEFAULT_PAGE_TITLE
+    return "Sessions: %s" % name[:_TITLE_LIMIT]
+
+
+def build_page(template_path, ttyd_public_port, agent_name=""):
+    """Load the UI, baking in what the container cannot discover for itself.
+
+    The published port is one such thing — docker publishes it on the host side
+    and nothing inside can see it — and the box's own name is the other.
     """
     with open(template_path, encoding="utf-8") as handle:
-        return handle.read().replace("__TTYD_PUBLIC_PORT__", str(ttyd_public_port))
+        page = handle.read()
+    return page.replace("__TTYD_PUBLIC_PORT__", str(ttyd_public_port)).replace(
+        "__PAGE_TITLE__", html.escape(page_title(agent_name))
+    )
 
 
 def configure_logging():
@@ -149,6 +179,7 @@ def main():
     Handler.page = build_page(
         os.path.join(here, "sessions_page.html"),
         os.environ.get("TTYD_PUBLIC_PORT", "8085"),
+        os.environ.get("AGENT_NAME", ""),
     )
     Handler.credential = (
         os.environ.get("TTYD_USER", ""),
