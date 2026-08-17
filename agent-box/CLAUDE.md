@@ -139,8 +139,10 @@ write. Before writing something down, decide which of these it is:
 - **Skills** — anything procedural. A repeatable multi-step procedure belongs in a
   skill, never in a memory file or a CLAUDE.md: a skill costs one line of context
   until it is invoked. Project-specific skills live in `/workspace/.claude/skills/`
-  so they travel with the repo. Skills useful to *any* agent-box deployment belong
-  in the image instead.
+  so they travel with the repo — no plumbing needed, Claude Code reads them in place.
+  Skills useful to *any* agent-box deployment go in the image instead, at
+  `agent-box/skills/<name>/SKILL.md`, and reach `~/.claude/skills/` on the next
+  container start (rebuild required).
 
 Never hand-edit `~/.claude/CLAUDE.md` — the entrypoint overwrites it from the baked
 copy on every container start, so changes must be made in `agent-box/CLAUDE.md` and

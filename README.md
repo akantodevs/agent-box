@@ -330,12 +330,16 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 | `agent-box/scripts/statusline.js`         | Default Claude Code status line (model, git branch, context usage, plan usage, session cost). Wired into `settings.json` by `ep.sh` unless a `statusLine` is already configured.                                                                                                                                                                                                          |
 | `agent-box/scripts/terraform-guard.js`    | `PreToolUse`/`PostToolUse` hook enforcing `ALLOW_TERRAFORM_MODIFY` (`No`/`Ask`/`Yes`; fail-closed) for infrastructure- or state-mutating Terraform (`apply`, `destroy`, `import`, `state rm`/`mv`, `taint`, ...); read-only commands (`plan`, `validate`, `show`, ...) pass through. In `Ask` mode it prompts once per terraform directory and remembers it (so stage vs prod ask separately), persisting approvals in `~/.claude/terraform-approvals.json`. Registered for both events idempotently in `settings.json` by `ep.sh`.                       |
 | `agent-box/CLAUDE.md`                     | The agent's global operating manual + guardrails, refreshed into the volume on every start.                                                                                                                                                                                                                                                                                               |
+| `agent-box/skills/`                       | Skills baked into the image and synced to `~/.claude/skills/` on every start, so every deployment has them offline. Project-specific skills belong in the workspace at `/workspace/.claude/skills/` instead, where Claude Code reads them in place.                                                                                                                                        |
+| `agent-box/scripts/sync_claude_home.sh`   | Mirrors the baked `~/.claude` content (manual, skills) into the `claude-data` volume on every start. Needed because a named volume is pre-populated from the image only while empty — afterwards the volume wins, so a `COPY` alone would never reach an existing box. Image wins for what it ships; anything else in the volume is untouched; content dropped from a later image is removed. |
 | `.github/workflows/publish-agent-box.yml` | Builds the image on pushes to `main` touching `agent-box/**` and pushes `latest` + `sha-<commit>` tags to ghcr.io.                                                                                                                                                                                                                                                                        |
 
 ### Startup lifecycle
 
 1. The container starts `ep.sh` as **root** (PID 1).
-2. It `chown`s `/home/claude` and `/workspace`, seeds onboarding-skip config (only files that
+2. It syncs the image-owned `~/.claude` content — the operating manual and any baked
+   skills — into the `claude-data` volume via `sync_claude_home.sh`. It `chown`s
+   `/home/claude` and `/workspace`, seeds onboarding-skip config (only files that
    don't already exist — `settings.json` lives in the volume and accumulates runtime
    state like plugin enablement, so it is never overwritten), and **grants the `claude`
    user access to the mounted Docker socket** by adding it to a group that matches the

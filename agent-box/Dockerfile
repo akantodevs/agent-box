@@ -72,9 +72,14 @@ COPY plugins.txt /opt/agent-box/plugins.txt
 COPY scripts/ /opt/agent-box/scripts/
 RUN chmod +x /opt/agent-box/scripts/*.sh
 
-# Bake the agent's operating manual so ep.sh can copy it into the .claude volume on every startup,
-# keeping it current after image rebuilds even when the volume already has content.
-COPY CLAUDE.md /opt/agent-box/CLAUDE.md
+# Bake the content the image owns inside ~/.claude, laid out exactly as it lands there.
+# ep.sh runs sync_claude_home.sh on every startup to copy this into the claude-data
+# volume: a named volume is pre-populated from the image only while it is EMPTY, so a
+# COPY alone would reach a fresh box once and never update an existing one.
+# CLAUDE.md keeps its repo path (README.md and /workspace/CLAUDE.md both name it) and
+# is mapped into the tree here.
+COPY CLAUDE.md /opt/agent-box/claude-home/CLAUDE.md
+COPY skills/ /opt/agent-box/claude-home/skills/
 
 # Healthy = ttyd answers HTTP on 8081 and the admin page answers on 8082. No -f
 # on the ttyd probe: it uses basic auth, so an unauthenticated request gets 401 —

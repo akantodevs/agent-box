@@ -14,9 +14,10 @@ CLAUDE_HOME=/home/claude
 CLAUDE_STATE_DIR="$CLAUDE_HOME/.claude"
 mkdir -p "$CLAUDE_STATE_DIR"
 
-# Always refresh the operating manual from the baked-in copy so image rebuilds
-# are reflected in the volume without having to recreate it.
-cp /opt/agent-box/CLAUDE.md "$CLAUDE_HOME/.claude/CLAUDE.md"
+# Always refresh the content the image owns (operating manual, baked skills) from
+# the baked tree so image rebuilds are reflected in the volume without having to
+# recreate it. Runs before the chown below, so synced files land owned by claude.
+CLAUDE_STATE_DIR="$CLAUDE_STATE_DIR" /opt/agent-box/scripts/sync_claude_home.sh
 chown -R claude:claude "$CLAUDE_HOME"
 
 mkdir -p /workspace
