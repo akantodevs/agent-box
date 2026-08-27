@@ -6,7 +6,7 @@ FROM debian:trixie
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git iproute2 nano \
     procps psmisc jq less netcat-openbsd dnsutils openssh-client \
-    unzip zip wget file tree arping iputils-ping \
+    unzip zip wget file tree arping iputils-ping binutils wget \
     python3-pip python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
