@@ -1,5 +1,10 @@
 FROM debian:trixie
 
+# Set by BuildKit from --platform (amd64 or arm64). The image is published for
+# both, so Apple Silicon Macs run it natively; downloads of prebuilt binaries
+# below pick their architecture from this instead of hardcoding x86_64.
+ARG TARGETARCH
+
 # Base utilities for an autonomous dev agent: process tools (procps/psmisc),
 # JSON (jq), paging (less), network probing (netcat/dnsutils), and archive/file
 # helpers — all small, all used constantly when driving a compose stack.
@@ -14,10 +19,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs && rm -rf /var/lib/apt/lists/*
 
-# Install ttyd (web terminal) - not in bookworm repos
-RUN curl -fsSL -o /usr/local/bin/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 \
+# Install ttyd (web terminal) - not in bookworm repos. Its release assets use
+# uname-style names, so map the Docker arch onto them.
+RUN case "${TARGETARCH}" in \
+        amd64) TTYD_ARCH=x86_64 ;; \
+        arm64) TTYD_ARCH=aarch64 ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${TTYD_ARCH}" \
     && chmod +x /usr/local/bin/ttyd
-    
+
 # Install docker client
 RUN curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc && chmod a+r /etc/apt/keyrings/docker.asc
 RUN echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
@@ -36,8 +47,8 @@ RUN apt-get update && apt-get install -y terraform && rm -rf /var/lib/apt/lists/
 # any conformant cluster (vanilla k8s, k3s, …); the kubeconfig is supplied per
 # deployment, not baked here.
 RUN KVER="$(curl -fsSL https://dl.k8s.io/release/stable.txt)" \
-    && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${KVER}/bin/linux/amd64/kubectl" \
-    && curl -fsSL -o /tmp/kubectl.sha256 "https://dl.k8s.io/release/${KVER}/bin/linux/amd64/kubectl.sha256" \
+    && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${KVER}/bin/linux/${TARGETARCH}/kubectl" \
+    && curl -fsSL -o /tmp/kubectl.sha256 "https://dl.k8s.io/release/${KVER}/bin/linux/${TARGETARCH}/kubectl.sha256" \
     && echo "$(cat /tmp/kubectl.sha256)  /usr/local/bin/kubectl" | sha256sum --check \
     && chmod +x /usr/local/bin/kubectl \
     && rm -f /tmp/kubectl.sha256

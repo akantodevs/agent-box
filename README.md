@@ -92,7 +92,8 @@ For the full story (building locally, configuration, how it works), read on.
   instructions, including the guardrails that keep it inside this stack.
 - **Published image** — every push to `main` builds and pushes
   `ghcr.io/akantodevs/agent-box` via GitHub Actions, so consuming projects don't need a
-  local checkout of this repo.
+  local checkout of this repo. It is multi-arch (`linux/amd64` and `linux/arm64`), so it
+  runs natively on Apple Silicon Macs as well as x86 Linux/Windows hosts.
 
 ---
 
@@ -235,6 +236,9 @@ Notes:
 
 - `latest` is resolved at pull time — update with `docker compose pull agent`. A
   `sha-<commit>` tag is also published per build if you want to pin.
+- The image is published for `linux/amd64` and `linux/arm64`; Docker pulls the variant
+  matching the host, so Apple Silicon (M1 and later) Macs run it natively without
+  Rosetta emulation. No `platform:` key is needed.
 - The `claude-data` volume is **project-scoped** (`<project>_claude-data`), so each
   project logs in once and keeps its own conversation history. Don't share it between
   projects: the admin page lists every session in the volume, so a shared one would
