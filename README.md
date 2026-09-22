@@ -88,6 +88,9 @@ For the full story (building locally, configuration, how it works), read on.
   server and a matching headless Chromium are baked into the image, so the agent can
   drive web pages (navigate, click, fill forms, screenshot) to verify the UIs it
   builds.
+- **Git & GitHub ready** — `git` and the GitHub CLI (`gh`) are installed; give the box
+  a `GH_TOKEN` and both are authenticated. Whether the agent may commit, push and open
+  PRs is up to you (`ALLOW_GIT_WRITE`, off by default) — see [GitHub access](#github-access).
 - **Operating manual baked in** — `agent-box/CLAUDE.md` ships as the agent's global
   instructions, including the guardrails that keep it inside this stack.
 - **Published image** — every push to `main` builds and pushes
@@ -223,6 +226,15 @@ services:
       # SESSION_LIST_PUBLIC_PORT: 8090
       # AGENT_TABS_PUBLIC_PORT: 8091
       CLAUDE_MODEL: "opus" # optional; opus/sonnet/fable or a full model id
+      # Optional GitHub access — see "GitHub access" below
+      # (GH_TOKEN comes from .credentials via env_file below)
+      # GIT_USER_NAME: "agent-box"
+      # GIT_USER_EMAIL: "agent-box@example.com"
+      # ALLOW_GIT_WRITE: "No"
+    # Optional secrets file (GH_TOKEN=...); keep it out of version control
+    # env_file:
+    #   - path: .credentials
+    #     required: false
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./:/workspace:z
@@ -317,6 +329,63 @@ All knobs are environment variables on the `agent` service in `docker-compose.ym
 | `DISABLE_PLAYWRIGHT`          | unset              | Set to `"true"` to disable the Playwright browser-automation plugin — useful when running agent-box for something other than web development. Clearing it re-enables the plugin on the next start.                                                                                                                                                                                                      |
 | `ALLOW_TERRAFORM_MODIFY`      | `Ask`<sup>\*</sup> | Whether the agent may run infrastructure-mutating Terraform (`apply`, `destroy`, `import`, `state rm`/`mv`, `taint`, ...). `No` blocks, `Ask` prompts once per terraform directory then remembers it, `Yes` runs freely. Read-only commands always run. <sup>\*</sup>Shipped as `Ask` in `docker-compose.yml`; if unset/unrecognized the guard fails **closed** (blocks).                               |
 | `REMOTE_CONTROL_NAME`         | unset              | When set, Claude Code launches with `--remote-control <name>-<suffix>`, enabling Remote Control and naming the session. Set the **base** name; each session appends its own suffix (its slugified title, or the head of its id) so concurrent sessions stay distinguishable. Leave unset to keep Remote Control off (the default).                                                                      |
+| `GH_TOKEN`                    | unset              | GitHub token for `git` and `gh` (see [GitHub access](#github-access)). `gh` reads it directly; git uses it through `gh auth git-credential`, so it is never written to disk. Supply it through a gitignored `.credentials` file loaded with `env_file:` — never in the compose file itself. Unset leaves GitHub unauthenticated (public reads still work). |
+| `GIT_USER_NAME` / `GIT_USER_EMAIL` | unset              | Commit identity, written to the `claude` user's `~/.gitconfig` at startup. Unset, git refuses to commit. |
+| `ALLOW_GIT_WRITE`             | `No`<sup>\*</sup>  | Whether the agent may run git/gh write operations (`commit`, `push`, `pull`, `merge`, `rebase`, `reset`, `checkout`/`switch`, creating branches or tags, `gh pr create`, ...). `No` blocks them and the agent leaves changes in the working tree; `Yes` allows them, and the agent works on a branch and opens a PR. Reads (`status`, `diff`, `log`, `fetch`, `clone`, `gh pr view`, ...) always run. <sup>\*</sup>Shipped as `No`; if unset/unrecognized the guard fails **closed** (blocks). |
+
+### GitHub access
+
+`git` and `gh` are always installed. To let them talk to GitHub as you, create a
+**fine-grained personal access token** and hand it to the box as `GH_TOKEN`:
+
+1. On GitHub, go to **Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token**
+   ([direct link](https://github.com/settings/personal-access-tokens/new)).
+2. Give it a name and an **expiration**, and pick the **resource owner** — your user,
+   or the organization that owns the repositories (an organization may have to
+   approve the token before it works).
+3. Under **Repository access**, choose **Only select repositories** and pick just the
+   repositories this box works on.
+4. Under **Repository permissions**, grant:
+
+   | Permission    | `ALLOW_GIT_WRITE: "No"` | `ALLOW_GIT_WRITE: "Yes"` | Used for                                              |
+   | ------------- | ----------------------- | ------------------------ | ----------------------------------------------------- |
+   | Metadata      | Read (always required)  | Read (always required)   | Everything — GitHub adds it automatically             |
+   | Contents      | Read                    | Read and write           | `git clone`/`fetch`; `git push`                        |
+   | Pull requests | Read                    | Read and write           | `gh pr view/list/diff`; `gh pr create`                 |
+   | Issues        | Read                    | Read and write           | `gh issue view/list`; labels, assignees and milestones on a PR (`gh pr create --label ...`), commenting on or filing issues |
+   | Commit statuses | Read (optional)       | Read (optional)          | Status checks from external CI in `gh pr checks`      |
+   | Actions       | Read (optional)         | Read (optional)          | `gh run list/view` to check CI                         |
+   | Workflows     | —                       | Read and write, only if the agent may change `.github/workflows/` | Pushing commits that touch workflow files |
+
+   Leave everything else at **No access**.
+5. Generate the token, copy it, and put it in a `.credentials` file next to
+   `docker-compose.yml`, one `KEY=value` per line. Keep it out of version control;
+   this repo's `.gitignore` already does:
+
+   ```bash
+   GH_TOKEN=github_pat_...
+   ```
+
+   The compose file loads it with `env_file:` (`path: .credentials`,
+   `required: false`, so the box still starts without it). Don't also list
+   `GH_TOKEN` under `environment:`: an entry there overrides `env_file` and would
+   blank the token. Recreate the container (`docker compose up -d`) for a new or
+   rotated token to take effect.
+
+Set `GIT_USER_NAME` / `GIT_USER_EMAIL` if the agent should commit, and
+`ALLOW_GIT_WRITE: "Yes"` to allow it to push branches and open pull requests. The
+token's scope is the real limit on what the agent can reach, so keep it to the
+repositories and permissions it needs; a classic token with the `repo` scope works too,
+but grants access to every repository you can reach (and needs the `workflow` scope as
+well to push changes under `.github/workflows/`).
+
+The token lands in two places the agent can read: the `.credentials` file (inside the
+`/workspace` mount) and the container's own configuration (`docker inspect` over the
+mounted socket). That is inherent to giving it a token at all — which is why its
+scope is the real boundary. `~/.gitconfig` is rebuilt from these variables on every
+start, so a `git config --global` change made inside the box lasts only until the
+next restart.
 
 A default **status line** (model, git branch, context usage, plan usage, session cost)
 ships in the image. To customize it, edit the `statusLine` entry in the volume's
@@ -343,6 +412,7 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 | `agent-box/scripts/sessions_page.html`    | The admin page's UI. `sessions.py` bakes `AGENT_TABS_PUBLIC_PORT` into it at startup so the rows can link to the agent tabs, and `AGENT_NAME` as the page's browser-tab title.                                                                                                                                                                                                                                                                                                                                                      |
 | `agent-box/scripts/install_plugins.sh`    | Idempotently installs **and enables** the plugins from `plugins.txt`.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `agent-box/scripts/statusline.js`         | Default Claude Code status line (model, git branch, context usage, plan usage, session cost). Wired into `settings.json` by `ep.sh` unless a `statusLine` is already configured.                                                                                                                                                                                                                                                                                                                                                    |
+| `agent-box/scripts/git-guard.js`          | `PreToolUse` hook enforcing `ALLOW_GIT_WRITE` (`No`/`Yes`; fail-closed): denies git write subcommands (`commit`, `push`, `pull`, `merge`, `rebase`, `reset`, `stash`, `checkout`/`switch`, branch/tag creation, ...) `restore`/`clean`, remote/config changes, ...) and any `gh` command outside a read allowlist (`view`/`list`/`status`/`diff`/`checks`/`watch`, `search`, clone/download, GET-only `gh api`, GraphQL queries). Always denies printing the token (`gh auth token`, `--show-token`). Registered idempotently in `settings.json` by `ep.sh`. |
 | `agent-box/scripts/terraform-guard.js`    | `PreToolUse`/`PostToolUse` hook enforcing `ALLOW_TERRAFORM_MODIFY` (`No`/`Ask`/`Yes`; fail-closed) for infrastructure- or state-mutating Terraform (`apply`, `destroy`, `import`, `state rm`/`mv`, `taint`, ...); read-only commands (`plan`, `validate`, `show`, ...) pass through. In `Ask` mode it prompts once per terraform directory and remembers it (so stage vs prod ask separately), persisting approvals in `~/.claude/terraform-approvals.json`. Registered for both events idempotently in `settings.json` by `ep.sh`. |
 | `agent-box/CLAUDE.md`                     | The agent's global operating manual + guardrails, refreshed into the volume on every start.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `agent-box/skills/`                       | Skills baked into the image and synced to `~/.claude/skills/` on every start, so every deployment has them offline. Project-specific skills belong in the workspace at `/workspace/.claude/skills/` instead, where Claude Code reads them in place.                                                                                                                                                                                                                                                                                 |
@@ -359,7 +429,8 @@ only sets the default when no `statusLine` is configured, so your changes stick.
    state like plugin enablement, so it is never overwritten), and **grants the `claude`
    user access to the mounted Docker socket** by adding it to a group that matches the
    socket's GID (it never `chmod`s the socket itself, which would alter the host's
-   inode).
+   inode). It registers the safety hooks (`terraform-guard.js`, `git-guard.js`) and
+   regenerates the `claude` user's `~/.gitconfig` from `GH_TOKEN` / `GIT_USER_*`.
 3. It installs and enables plugins from `plugins.txt` as the `claude` user (idempotent).
 4. It launches **ttyd** on port `8091` with `-a` (so a tab can name its session as
    `?arg=<session-id>`) and no client limit. Every connection runs
@@ -397,7 +468,9 @@ The agent operates under the rules in `agent-box/CLAUDE.md`. In short:
   containers.
 - **Never** stop, restart, rebuild, or remove the `agent` service — that's the agent's
   own container.
-- No git operations (commits/branches/pushes are handled outside the box).
+- Git write operations only when `ALLOW_GIT_WRITE` is `Yes` (enforced by a hook), and
+  then only as a branch plus pull request — no force-pushes, no pushing to the
+  default branch. Otherwise changes stay in the working tree for you to commit.
 - Be careful with stateful services; don't wipe volumes or run destructive migrations
   against non-test datastores.
 - Don't tear the stack down; restarting individual services to apply changes is fine.
@@ -419,6 +492,13 @@ This is a development convenience, not a sandbox. Treat it accordingly:
   administration page; expose neither publicly. The terminal is a root-capable shell by
   proxy, and the admin page can **permanently delete conversations** — anyone who
   reaches it can destroy transcripts that have no backup.
+- **`GH_TOKEN` is visible to the agent.** It sits in the session environment, so
+  anything the agent runs can use it. Scope it to the repositories and permissions the
+  box needs, give it an expiration, and revoke it on GitHub if the box is compromised.
+  The box never writes it anywhere itself and keeps it off command lines; the manual
+  tells the agent never to print it, and the git guard blocks `gh auth token` /
+  `--show-token`. It is still readable in `.credentials` and through `docker inspect`, so
+  treat anything the agent can reach as able to use it.
 - The `claude-data` volume holds your live credentials and conversation history. Remove
   it (`docker volume rm`) only if you intend to wipe the login and all transcripts.
 

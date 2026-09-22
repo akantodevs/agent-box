@@ -18,6 +18,8 @@ CONTAINER_LOG="${AGENT_BOX_LOG:-/var/log/container.log}"
 # exported here, not just set in the Dockerfile.
 export DISABLE_AUTOUPDATER=1                  # image owns the CLI version
 export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright # where the baked Chromium lives
+export GH_PROMPT_DISABLED=1                   # no keyboard to answer gh's prompts
+export GH_NO_UPDATE_NOTIFIER=1                # image owns the gh version too
 
 # The terminal's title is this box's way of naming browser tabs (see
 # session_title.py at the bottom of this script), and Claude Code otherwise
@@ -40,6 +42,19 @@ export AGENT_NAME="${AGENT_NAME:-}"
 # deployment leaves it unset, so "set but empty" is the live case for all three
 # of these.
 export ALLOW_TERRAFORM_MODIFY="${ALLOW_TERRAFORM_MODIFY:-}"
+
+# Git write mode (Yes/No) for the git-guard.js hook, same passage and same
+# fail-closed empty default as the terraform mode above. The identity is what
+# ep.sh already wrote into ~/.gitconfig; it is exported as well so the agent can
+# see what this deployment commits as. None of these are git's own variables,
+# so an empty value changes nothing about git itself.
+#
+# GH_TOKEN is deliberately absent: it arrives through su's environment
+# whitelist and is inherited as is. ep.sh unsets an empty one, and defaulting
+# it here would only manufacture that empty value again.
+export ALLOW_GIT_WRITE="${ALLOW_GIT_WRITE:-}"
+export GIT_USER_NAME="${GIT_USER_NAME:-}"
+export GIT_USER_EMAIL="${GIT_USER_EMAIL:-}"
 
 # Model is configurable via the CLAUDE_MODEL env var (set in docker-compose.yml,
 # passed through the `su - claude` login by launch_session.sh). Defaults to "opus".

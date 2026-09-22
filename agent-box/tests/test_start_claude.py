@@ -95,6 +95,8 @@ class StartTestCase(unittest.TestCase):
         env.pop("CLAUDE_MODEL", None)
         env.pop("REMOTE_CONTROL_NAME", None)
         env.pop("ALLOW_TERRAFORM_MODIFY", None)
+        for key in ("ALLOW_GIT_WRITE", "GIT_USER_NAME", "GIT_USER_EMAIL", "GH_TOKEN"):
+            env.pop(key, None)
         env.pop("AGENT_NAME", None)
         for key, value in overrides.items():
             if value is None:
@@ -404,6 +406,31 @@ class EnvironmentTest(StartTestCase):
         """Unset would let the hook read some other value; empty fails closed."""
         self.assertEqual("", self._exported("ALLOW_TERRAFORM_MODIFY",
                                             ALLOW_TERRAFORM_MODIFY=None))
+
+    def test_git_settings_are_exported(self):
+        for name, value in (("ALLOW_GIT_WRITE", "Yes"),
+                            ("GIT_USER_NAME", "Agent Box"),
+                            ("GIT_USER_EMAIL", "agent@example.com")):
+            with self.subTest(name=name):
+                self.assertEqual(value, self._exported(name, **{name: value}))
+
+    def test_git_settings_are_exported_empty_when_unset(self):
+        """Empty, like the terraform mode: the git guard fails closed on it."""
+        for name in ("ALLOW_GIT_WRITE", "GIT_USER_NAME", "GIT_USER_EMAIL"):
+            with self.subTest(name=name):
+                self.assertEqual("", self._exported(name, **{name: None}))
+
+    def test_gh_never_prompts_or_nags(self):
+        """No keyboard is attached to what the agent runs (see the manual)."""
+        self.assertEqual("1", self._exported("GH_PROMPT_DISABLED"))
+        self.assertEqual("1", self._exported("GH_NO_UPDATE_NOTIFIER"))
+
+    def test_the_token_reaches_claude(self):
+        self.assertEqual("ghp_x", self._exported("GH_TOKEN", GH_TOKEN="ghp_x"))
+
+    def test_an_unset_token_stays_unset(self):
+        """ep.sh unsets an empty token; nothing here may manufacture one."""
+        self.assertEqual("<unset>", self._exported("GH_TOKEN", GH_TOKEN=None))
 
     def test_autoupdater_is_disabled(self):
         self.assertEqual("1", self._exported("DISABLE_AUTOUPDATER"))

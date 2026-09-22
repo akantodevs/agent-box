@@ -53,8 +53,11 @@ REAL_START_CLAUDE = os.path.join(SCRIPTS_DIR, "start_claude.sh")
 
 SU_STUB = """#!/bin/sh
 # Records its argv NUL-separated and exits 0. NUL is the separator because the
-# `su -c` command string may contain anything, newlines included.
+# `su -c` command string may contain anything, newlines included. GH_TOKEN is
+# recorded separately: it must reach su through the environment (for its -w
+# whitelist), never through argv.
 printf '%s\\0' "$@" > "$SU_ARGV_FILE"
+printf '%s' "${GH_TOKEN-<unset>}" > "$SU_ARGV_FILE.token"
 exit 0
 """
 
@@ -71,6 +74,9 @@ START_CLAUDE_STUB = """#!/bin/sh
     printf 'ALLOW_TERRAFORM_MODIFY=%s\\0' "$ALLOW_TERRAFORM_MODIFY"
     printf 'REMOTE_CONTROL_NAME=%s\\0' "$REMOTE_CONTROL_NAME"
     printf 'AGENT_NAME=%s\\0' "$AGENT_NAME"
+    printf 'ALLOW_GIT_WRITE=%s\\0' "$ALLOW_GIT_WRITE"
+    printf 'GIT_USER_NAME=%s\\0' "$GIT_USER_NAME"
+    printf 'GIT_USER_EMAIL=%s\\0' "$GIT_USER_EMAIL"
 } > "$LAUNCH_RECORD"
 """
 
@@ -184,8 +190,14 @@ class LaunchTestCase(unittest.TestCase):
                 "ALLOW_TERRAFORM_MODIFY": "",
                 "REMOTE_CONTROL_NAME": "",
                 "AGENT_NAME": "",
+                "ALLOW_GIT_WRITE": "",
+                "GIT_USER_NAME": "",
+                "GIT_USER_EMAIL": "",
             }
         )
+        # The test runner may itself hold a real token; it must not leak into
+        # a recorded argv file, and "unset" is the default being tested.
+        env.pop("GH_TOKEN", None)
         for key, value in overrides.items():
             if value is None:
                 env.pop(key, None)
@@ -232,9 +244,14 @@ class LaunchTestCase(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         argv = self.su_argv()
         self.assertIsNotNone(argv, "su was not invoked")
-        self.assertEqual(["-", "claude", "-c"], argv[:3])
-        self.assertEqual(4, len(argv), argv)
-        return argv[3]
+        self.assertEqual(["-w", "GH_TOKEN", "-", "claude", "-c"], argv[:5])
+        self.assertEqual(6, len(argv), argv)
+        return argv[5]
+
+    def su_token(self):
+        """GH_TOKEN as su saw it in its environment ("<unset>" if absent)."""
+        with open(self.su_argv_file + ".token", encoding="utf-8") as handle:
+            return handle.read()
 
     def eval_command(self, command):
         """Actually run the `su -c` string and return what start_claude.sh saw.
@@ -248,7 +265,8 @@ class LaunchTestCase(unittest.TestCase):
         env = dict(os.environ)
         env["LAUNCH_RECORD"] = self.launch_record
         for key in ("CLAUDE_MODEL", "ALLOW_TERRAFORM_MODIFY", "REMOTE_CONTROL_NAME",
-                    "AGENT_NAME"):
+                    "AGENT_NAME", "ALLOW_GIT_WRITE", "GIT_USER_NAME",
+                    "GIT_USER_EMAIL"):
             env.pop(key, None)
         done = subprocess.run(
             ["/bin/sh", "-c", command],
@@ -380,6 +398,41 @@ class EnvironmentTest(LaunchTestCase):
         self.assertEqual("", record["ALLOW_TERRAFORM_MODIFY"])
         self.assertEqual("", record["REMOTE_CONTROL_NAME"])
         self.assertEqual("", record["AGENT_NAME"])
+
+    def test_git_settings_are_passed_through(self):
+        result = self.run_script(
+            ALLOW_GIT_WRITE="Yes",
+            GIT_USER_NAME="Anders' Agent",
+            GIT_USER_EMAIL="agent@example.com",
+        )
+        record = self.eval_command(self.launched_command(result))
+        self.assertEqual("Yes", record["ALLOW_GIT_WRITE"])
+        self.assertEqual("Anders' Agent", record["GIT_USER_NAME"])
+        self.assertEqual("agent@example.com", record["GIT_USER_EMAIL"])
+
+    def test_unset_git_settings_arrive_empty(self):
+        result = self.run_script(
+            ALLOW_GIT_WRITE=None, GIT_USER_NAME=None, GIT_USER_EMAIL=None
+        )
+        record = self.eval_command(self.launched_command(result))
+        self.assertEqual("", record["ALLOW_GIT_WRITE"])
+        self.assertEqual("", record["GIT_USER_NAME"])
+        self.assertEqual("", record["GIT_USER_EMAIL"])
+
+    def test_the_token_travels_in_the_environment_not_argv(self):
+        # argv is world-readable through ps and /proc/<pid>/cmdline; the
+        # environment of another user's process is not.
+        token = "ghp_notARealToken123"
+        result = self.run_script(GH_TOKEN=token)
+        command = self.launched_command(result)
+        for arg in self.su_argv():
+            self.assertNotIn(token, arg)
+        self.assertNotIn("GH_TOKEN=", command)
+        self.assertEqual(token, self.su_token())
+
+    def test_no_token_is_invented_when_unset(self):
+        self.launched_command(self.run_script())
+        self.assertEqual("<unset>", self.su_token())
 
     def test_a_quote_in_an_environment_value_cannot_break_out(self):
         # These come from docker-compose.yml rather than from a URL, but they

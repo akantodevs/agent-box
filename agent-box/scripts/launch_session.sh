@@ -205,11 +205,19 @@ launch() {
     # raw mode, i.e. during startup, and ending a session a second after it
     # began — with its transcript intact and resumable — beats leaking one.
     trap hangup HUP TERM INT
-    su - claude -c "cd /workspace \
+    # GH_TOKEN is the one secret here, and it is the one value that does *not*
+    # travel in the command string: su's argv is readable by every process in
+    # the container (ps, /proc/<pid>/cmdline), the environment of another
+    # user's process is not. `-w` carries it through the login from this
+    # script's own environment; when it is unset, nothing is carried.
+    su -w GH_TOKEN - claude -c "cd /workspace \
 && CLAUDE_MODEL=$(quote "${CLAUDE_MODEL:-}") \
 ALLOW_TERRAFORM_MODIFY=$(quote "${ALLOW_TERRAFORM_MODIFY:-}") \
 REMOTE_CONTROL_NAME=$(quote "${REMOTE_CONTROL_NAME:-}") \
 AGENT_NAME=$(quote "${AGENT_NAME:-}") \
+ALLOW_GIT_WRITE=$(quote "${ALLOW_GIT_WRITE:-}") \
+GIT_USER_NAME=$(quote "${GIT_USER_NAME:-}") \
+GIT_USER_EMAIL=$(quote "${GIT_USER_EMAIL:-}") \
 $SCRIPTS/start_claude.sh $1" <&3 3<&- &
     SESSION_PID=$!
 

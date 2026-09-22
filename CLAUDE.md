@@ -13,9 +13,11 @@ file adds what's specific to developing agent-box.)
 
 ## Working with GitHub issues
 
-Planned work and ideas are tracked as GitHub issues. The `gh` CLI is not installed
-and git operations are out of bounds, but the repo is public — read issues through
-the API or web:
+Planned work and ideas are tracked as GitHub issues. This deployment's
+`ALLOW_GIT_WRITE` and `GH_TOKEN` (from `.credentials`) decide what you may do —
+check `echo "$ALLOW_GIT_WRITE"` rather than assuming. The git remote is named
+`Github`, not `origin`. The repo is public, so issues can always be read with
+`gh issue list` / `gh issue view <n> --comments` or through the API:
 
 - List open issues:
   `curl -s "https://api.github.com/repos/akantodevs/agent-box/issues?state=open"`
@@ -24,8 +26,8 @@ the API or web:
   `.../issues/<n>/comments`
 - When asked to "look at the issues" or pick up work, start from the open-issues
   list, and reference issue numbers (`#<n>`) in your summaries so work can be traced
-  back. You cannot close or comment on issues — note in your summary when an issue
-  is addressed so the user can close it.
+  back. Don't close or comment on issues unless asked — note in your summary when an
+  issue is addressed so the user can close it (or reference it in the PR).
 
 ## Self-development cautions
 

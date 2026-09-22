@@ -54,6 +54,12 @@ right here:
 - **`terraform`** — IaC. (Mutating commands are gated by `ALLOW_TERRAFORM_MODIFY`;
   see Guardrails. Run `terraform …` directly, not inside another container.)
 - **`ssh` / `scp`** (openssh-client) — reach remote hosts directly.
+- **`git` / `gh`** (GitHub CLI) — version control and GitHub (issues, PRs, runs,
+  `gh api`). When the deployment sets `GH_TOKEN`, both are already authenticated:
+  `gh` reads the token itself and git uses it through `gh auth git-credential`, so
+  never pass the token on a command line or into a remote URL, and never print it
+  (`gh auth token` and `--show-token` are blocked). Write operations
+  are gated by `ALLOW_GIT_WRITE`; see Guardrails.
 - **`kubectl`** — Kubernetes CLI. Works against any conformant cluster (vanilla
   k8s, k3s, …); a kubeconfig is *not* baked into the image, so point it at a
   cluster per deployment (mount/copy a kubeconfig or set `KUBECONFIG`). Run it
@@ -62,7 +68,7 @@ right here:
   socket (that's the one legitimate use of Docker — operating the stack, not
   wrapping local tools).
 - **Networking:** `ping`, `arping`, `nc` (netcat), `dig` / `nslookup`, `curl`, `wget`.
-- **Languages & data:** `node` / `npm`, `python3` (+ `pip` / `venv`), `jq`, `git`.
+- **Languages & data:** `node` / `npm`, `python3` (+ `pip` / `venv`), `jq`.
 - **Files:** `unzip`, `zip`, `tree`, `file`, `less`, `nano`.
 
 Check with `command -v <tool>` if unsure. If you genuinely need something that
@@ -179,9 +185,19 @@ For log analysis, exception triage, incident response, and similar operational r
   or kill another `claude` process, and never delete a transcript — from the
   administration page or from `~/.claude/projects/`. Deletion is permanent: the
   conversation cannot be recovered, and it may be one someone is still using.
-- **Do not run git operations.** If the workspace is a git repository, leave your
-  changes in the working tree; commits, branches, and pushes are handled outside the
-  container.
+- **Git write operations are gated by `ALLOW_GIT_WRITE`** (check it with
+  `echo "$ALLOW_GIT_WRITE"`), enforced by the `git-guard.js` hook. Reads — `status`,
+  `diff`, `log`, `show`, `fetch`, `clone`, `gh … view/list/status/diff/checks`,
+  GET-only `gh api` — are always fine.
+  - **`No`, unset or anything else (the default):** do not commit, push, pull, merge,
+    rebase, reset, stash, check out, switch, restore or clean, create branches or
+    tags, change remotes or git config, or run `gh` commands that change anything. Leave your changes in the working tree;
+    commits, branches, and pushes are handled outside the container.
+  - **`Yes`:** you may use git and `gh` to deliver work as a pull request. Do the
+    work on a feature branch, commit with clear messages, push that branch, and open
+    a PR with `gh pr create`. Never force-push, never push to or merge into the
+    default branch, and never rewrite history that has been pushed, unless the user
+    explicitly asks. Don't merge your own PRs unless asked.
 - **Be careful with stateful services.** Don't delete volumes or wipe databases, and
   don't run destructive migrations against a non-test datastore. Prefer test
   databases and fixtures.

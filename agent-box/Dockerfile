@@ -40,6 +40,15 @@ RUN curl -fsSL https://apt.releases.hashicorp.com/gpg -o /etc/apt/keyrings/hashi
 RUN echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/hashicorp.asc] https://apt.releases.hashicorp.com $(. /etc/os-release && echo "$VERSION_CODENAME") main" | tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
 RUN apt-get update && apt-get install -y terraform && rm -rf /var/lib/apt/lists/*
 
+# Install the GitHub CLI from GitHub's official apt repo (same signed-repo
+# pattern as docker and terraform above). git itself is in the base utilities.
+# Auth comes from GH_TOKEN at runtime, never from the image: ep.sh points git's
+# credential helper at `gh auth git-credential`, and the git-guard.js hook
+# gates write operations per ALLOW_GIT_WRITE.
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg && chmod a+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+RUN echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+RUN apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
+
 # Install kubectl (Kubernetes CLI). Single dependency-free static binary, so it's
 # fetched straight from the official release bucket like ttyd above rather than via
 # an apt repo. `stable.txt` resolves to the current stable release at build time, and

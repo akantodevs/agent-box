@@ -7,3 +7,8 @@
 # locally built image as well as showing up as untracked here.
 __pycache__/
 *.pyc
+
+# Local secrets for docker-compose.yml
+.credentials
+
+docs/superpowers/

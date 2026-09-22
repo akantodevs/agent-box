@@ -96,35 +96,83 @@ if (!s.statusLine) {
     && chown claude:claude "$CLAUDE_HOME/.claude/settings.json" \
     || echo "WARN: failed to configure default status line"
 
-# Terraform safety hook: gate infrastructure- or state-mutating terraform
-# commands (apply/destroy/import/state rm|mv/taint/...) per the ALLOW_TERRAFORM_MODIFY
-# guardrail in the operating manual, even under --dangerously-skip-permissions.
-# The one script is registered for BOTH PreToolUse (decide) and PostToolUse
-# (remember an approved directory). Registered idempotently per event — each is
-# added only if a terraform-guard entry isn't already there — so existing
-# claude-data volumes (which already have the PreToolUse entry) gain PostToolUse
-# on the next boot without duplicating either.
+# Safety hooks, each gating one class of command per a guardrail in the
+# operating manual, even under --dangerously-skip-permissions:
+#   - terraform-guard.js: infrastructure- or state-mutating terraform
+#     (apply/destroy/import/state rm|mv/taint/...) per ALLOW_TERRAFORM_MODIFY.
+#     Registered for BOTH PreToolUse (decide) and PostToolUse (remember an
+#     approved directory).
+#   - git-guard.js: git/gh write operations (commit/push/branch/PR/...) per
+#     ALLOW_GIT_WRITE. PreToolUse only; it has nothing to remember.
+# Registered idempotently per script and event — each is added only if an entry
+# naming that script isn't already there — so existing claude-data volumes gain
+# new hooks on the next boot without duplicating the ones they have.
 node -e '
 const fs = require("fs");
 const f = process.argv[1];
 const s = JSON.parse(fs.readFileSync(f, "utf8"));
-const entry = () => ({
-  matcher: "Bash",
-  hooks: [{ type: "command", command: "node /opt/agent-box/scripts/terraform-guard.js" }],
-});
+const guards = [
+  { name: "terraform-guard", events: ["PreToolUse", "PostToolUse"] },
+  { name: "git-guard", events: ["PreToolUse"] },
+];
 s.hooks = s.hooks || {};
 let changed = false;
-for (const ev of ["PreToolUse", "PostToolUse"]) {
-  s.hooks[ev] = s.hooks[ev] || [];
-  if (!JSON.stringify(s.hooks[ev]).includes("terraform-guard")) {
-    s.hooks[ev].push(entry());
-    changed = true;
+for (const g of guards) {
+  for (const ev of g.events) {
+    s.hooks[ev] = s.hooks[ev] || [];
+    if (!JSON.stringify(s.hooks[ev]).includes(g.name)) {
+      s.hooks[ev].push({
+        matcher: "Bash",
+        hooks: [{ type: "command", command: `node /opt/agent-box/scripts/${g.name}.js` }],
+      });
+      changed = true;
+    }
   }
 }
 if (changed) fs.writeFileSync(f, JSON.stringify(s, null, 2) + "\n");
 ' "$CLAUDE_HOME/.claude/settings.json" \
     && chown claude:claude "$CLAUDE_HOME/.claude/settings.json" \
-    || echo "WARN: failed to register terraform safety hook"
+    || echo "WARN: failed to register safety hooks"
+
+# Git configuration for the claude user, rebuilt from the environment on every
+# boot. ~/.gitconfig lives on the container's own filesystem (only ~/.claude is
+# volume-backed), so it never outlives the settings it was made from.
+#   - GH_TOKEN set: git authenticates to GitHub through gh, which reads the
+#     token from the environment at call time — nothing secret is written here.
+#     Installed whatever ALLOW_GIT_WRITE says: cloning or fetching a private
+#     repo is a read, and the git-guard hook is what stops writes.
+#   - GIT_USER_NAME / GIT_USER_EMAIL: the identity commits are made under.
+#     Left out when unset, and git then refuses to commit.
+# Anything set with `git config --global` at runtime is therefore lost on the
+# next boot, by design: the environment is the configuration.
+# `git config --file` takes the values as argv, so nothing here is re-parsed by
+# a shell. Written as root and handed over afterwards.
+# A deployment can hand over "no token" as an empty string (`GH_TOKEN=` in its
+# env_file, or `GH_TOKEN: ${GH_TOKEN:-}` interpolation); make that unset, which is
+# what every check downstream — here, launch_session.sh's su -w, gh itself —
+# means by it.
+[ -n "${GH_TOKEN:-}" ] || unset GH_TOKEN
+GITCONFIG="$CLAUDE_HOME/.gitconfig"
+(
+    set -e
+    rm -f "$GITCONFIG"
+    touch "$GITCONFIG"
+    if [ -n "${GH_TOKEN:-}" ]; then
+        for host in https://github.com https://gist.github.com; do
+            git config --file "$GITCONFIG" "credential.$host.helper" ""
+            git config --file "$GITCONFIG" --add "credential.$host.helper" "!/usr/bin/gh auth git-credential"
+        done
+    fi
+    # /workspace is a bind mount whose owner is whatever the host says; when
+    # that is not claude's uid, git refuses to work in it ("dubious ownership").
+    git config --file "$GITCONFIG" safe.directory /workspace
+    [ -z "${GIT_USER_NAME:-}" ] || git config --file "$GITCONFIG" user.name "$GIT_USER_NAME"
+    [ -z "${GIT_USER_EMAIL:-}" ] || git config --file "$GITCONFIG" user.email "$GIT_USER_EMAIL"
+    chown claude:claude "$GITCONFIG"
+) || echo "WARN: failed to write $GITCONFIG"
+if [ -n "${GH_TOKEN:-}" ]; then
+    echo "GitHub credentials configured from GH_TOKEN (git write mode: ${ALLOW_GIT_WRITE:-unset})."
+fi
 
 # Install Claude Code plugins listed in plugins.txt (idempotent; runs as claude).
 # Both values are passed explicitly because `su -` is a login shell and strips
@@ -173,6 +221,15 @@ export CLAUDE_MODEL="${CLAUDE_MODEL:-opus}"
 # Terraform guard mode (No/Ask/Yes) for the terraform-guard.js hook. Empty/unset
 # makes the hook fail closed (block mutating commands).
 export ALLOW_TERRAFORM_MODIFY="${ALLOW_TERRAFORM_MODIFY:-}"
+
+# Git write mode (Yes/No) for the git-guard.js hook, and the commit identity
+# ~/.gitconfig was written from above. Empty/unset mode makes the hook fail
+# closed (block writes). GH_TOKEN is left exactly as Compose set it — exported
+# when set, absent when not — because launch_session.sh hands it to the session
+# through su's environment whitelist, never through a command string.
+export ALLOW_GIT_WRITE="${ALLOW_GIT_WRITE:-}"
+export GIT_USER_NAME="${GIT_USER_NAME:-}"
+export GIT_USER_EMAIL="${GIT_USER_EMAIL:-}"
 
 # Remote Control base name. When set, start_claude.sh launches Claude Code with
 # `--remote-control <name>-<per-session suffix>` so concurrent sessions stay
