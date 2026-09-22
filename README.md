@@ -130,16 +130,22 @@ docker compose logs -f agent
 
 ### 2. Open the session page and log in
 
-Browse to **http://localhost:8090** — the session administration page — and
-authenticate with the credentials from `docker-compose.yml` (defaults: **`admin` /
-`admin`** — change these for anything beyond local use). The same credentials guard the
-agent tabs on **http://localhost:8091**.
+Browse to the session administration page and authenticate with the credentials from
+`docker-compose.yml` (defaults: **`admin` / `admin`** — change these for anything beyond
+local use). The same credentials guard the agent tabs.
 
-> To run two boxes at once, set `AGENT_BOX_SESSION_LIST_PORT` and `AGENT_BOX_TABS_PORT`
-> (in a `.env` file next to the compose file, or in the environment) rather than editing
-> the `ports:` mapping. Each variable is used twice — once to publish the port, once to
-> tell the container about it — so overriding the variable moves both, while editing
-> only the mapping leaves the session list handing out links to the old port.
+This repository's own compose file publishes the two servers on **8095** (session list)
+and **8096** (agent tabs), leaving the default ports free for a second box; the snippet
+under [Using it for a real project](#using-it-for-a-real-project) uses **8090** and
+**8091**. Check the `ports:` entries in the compose file you started.
+
+> **Changing the ports.** Each surface is named twice — once in `ports:` as
+> `<host>:<container>`, once in `environment:` as `SESSION_LIST_PUBLIC_PORT` /
+> `AGENT_TABS_PUBLIC_PORT` — because the container cannot see the host side of a
+> mapping and the session list has to be told which port to put in its links. Change
+> both together, or the page hands out links to a port this box does not answer on.
+> `agent-box/tests/test_ports.py` fails if they disagree. The container-side ports
+> (8090 and 8091) are fixed by the image; only the host side is yours to choose.
 
 Click **+ New session** to open a terminal tab. On first run, Claude Code will prompt
 you to **log in**. Follow the prompt in the terminal (it gives you a URL to open in your
@@ -255,9 +261,10 @@ Notes:
   project logs in once and keeps its own conversation history. Don't share it between
   projects: the admin page lists every session in the volume, so a shared one would
   offer another project's conversations alongside this project's.
-- `container_name` is fixed, so only one agent-box runs at a time; change it — and set
-  `AGENT_BOX_SESSION_LIST_PORT` / `AGENT_BOX_TABS_PORT` to free ports — if you need two
-  projects up simultaneously.
+- `container_name` is fixed, so only one agent-box runs at a time; change it — and move
+  both surfaces to free host ports (the `ports:` mapping *and* the matching
+  `SESSION_LIST_PUBLIC_PORT` / `AGENT_TABS_PUBLIC_PORT` entry) — if you need two projects
+  up simultaneously.
 
 ### Option B — build from a local checkout
 
@@ -323,8 +330,8 @@ All knobs are environment variables on the `agent` service in `docker-compose.ym
 | ----------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AGENT_NAME`                  | container name     | What this box is called in browser tabs: the session administration page is titled `Sessions: <name>` and every session tab ends in it, which is how two agent-boxes open at once stay apart. Unset, the container's own name is used (asked of Docker over the mounted socket), falling back to the hostname — so set it whenever the container name is not what you want to read in a tab.            |
 | `TTYD_USER` / `TTYD_PASSWORD` | `admin` / `admin`  | Login for the web terminal **and** the session administration page. Change for anything beyond localhost.                                                                                                                                                                                                                                                                                               |
-| `AGENT_TABS_PUBLIC_PORT`      | `8091`             | The **host** port the agent tabs are published on (the left half of the `8091:8091` mapping). The container can't discover this itself, and the session list needs it to build its links — so it must match the `ports:` entry, or every link on the page points at the wrong port. In the shipped compose files both come from `AGENT_BOX_TABS_PORT`, so overriding that variable moves them together. |
-| `SESSION_LIST_PUBLIC_PORT`    | `8090`             | The host port the session list is published on (from `AGENT_BOX_SESSION_LIST_PORT`). Only used for the "Container ready" line in the container log; the page itself works regardless.                                                                                                                                                                                                                   |
+| `AGENT_TABS_PUBLIC_PORT`      | `8091`             | The **host** port the agent tabs are published on (the left half of its `ports:` mapping; this repo's own compose file uses `8096`). The container can't discover this itself, and the session list needs it to build its links — so it must match the `ports:` entry, or every link on the page points at the wrong port. Change it and the `ports:` entry together. |
+| `SESSION_LIST_PUBLIC_PORT`    | `8090`             | The host port the session list is published on (the left half of its `ports:` mapping; this repo's own compose file uses `8095`). Only used for the "Container ready" line in the container log; the page itself works regardless.                                                                                                                                                                                                                   |
 | `CLAUDE_MODEL`                | `opus`             | Model passed to `claude --model` at launch. Accepts an alias (`opus`, `sonnet`, `fable`, ...) or a full model id.                                                                                                                                                                                                                                                                                       |
 | `DISABLE_PLAYWRIGHT`          | unset              | Set to `"true"` to disable the Playwright browser-automation plugin — useful when running agent-box for something other than web development. Clearing it re-enables the plugin on the next start.                                                                                                                                                                                                      |
 | `ALLOW_TERRAFORM_MODIFY`      | `Ask`<sup>\*</sup> | Whether the agent may run infrastructure-mutating Terraform (`apply`, `destroy`, `import`, `state rm`/`mv`, `taint`, ...). `No` blocks, `Ask` prompts once per terraform directory then remembers it, `Yes` runs freely. Read-only commands always run. <sup>\*</sup>Shipped as `Ask` in `docker-compose.yml`; if unset/unrecognized the guard fails **closed** (blocks).                               |
@@ -521,8 +528,8 @@ This is a development convenience, not a sandbox. Treat it accordingly:
 - **"Refusing to resume: no transcript for ...":** the session list handed out a link to
   a port that is not this box's agent tabs — usually another agent-box, which is asked
   for a session it has never heard of. `AGENT_TABS_PUBLIC_PORT` doesn't match the host
-  port the tabs are published on in `ports:`. Set both from `AGENT_BOX_TABS_PORT` as the
-  compose files above do, and recreate the service — the port is baked into the page when
+  port the tabs are published on in `ports:`. Set the two to the same value and recreate
+  the service — the port is baked into the page when
   the server starts. (The same message is genuine when the transcript really is gone,
   e.g. deleted from the session list or aged out by Claude Code's own cleanup.)
 - **Add a plugin:** add a line to `agent-box/plugins.txt`, then rebuild (or rerun
