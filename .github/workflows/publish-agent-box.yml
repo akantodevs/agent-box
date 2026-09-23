@@ -50,6 +50,20 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha
 
+      # Resolve the newest published CLI and bake that exact version in. The
+      # Dockerfile could say `@latest` itself, but the install layer is cached
+      # on its command text alone: with `type=gha` below, an unchanging command
+      # is a cache hit on every run, and the image would keep shipping whatever
+      # CLI version was current when the layer was first cached. Substituting
+      # the resolved number makes a new release — and only a new release —
+      # invalidate the layer.
+      - name: Resolve latest Claude Code version
+        id: cli
+        run: |
+          version="$(npm view @anthropic-ai/claude-code version)"
+          echo "Building with Claude Code $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       # amd64 for Linux/Windows hosts, arm64 for Apple Silicon Macs (and arm
       # Linux servers). Docker pulls the matching variant automatically.
       - name: Build and push
@@ -58,6 +72,8 @@ jobs:
           context: agent-box
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            CLAUDE_CODE_VERSION=${{ steps.cli.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

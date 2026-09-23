@@ -334,12 +334,14 @@ class ParentWatchTest(unittest.TestCase):
             self.assertFalse(session_title._parent_watch()())
 
 
-class ProcessTest(unittest.TestCase):
-    """The script as start_claude.sh runs it: backgrounded, then orphaned."""
+class ProcessTest(NoBoxNameTestCase):
+    """The script as start_claude.sh runs it: backgrounded, then orphaned.
 
-    def setUp(self):
-        self.home = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+    NoBoxNameTestCase, and not a bare TestCase: these tests run the script as a
+    *subprocess*, which inherits this process's environment — so a suite run
+    inside a real agent-box (where AGENT_NAME is exported into every session)
+    would otherwise assert titles that arrive with the box name appended.
+    """
 
     def env(self, **overrides):
         env = dict(os.environ)

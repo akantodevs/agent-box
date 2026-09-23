@@ -130,16 +130,22 @@ docker compose logs -f agent
 
 ### 2. Open the session page and log in
 
-Browse to **http://localhost:8090** — the session administration page — and
-authenticate with the credentials from `docker-compose.yml` (defaults: **`admin` /
-`admin`** — change these for anything beyond local use). The same credentials guard the
-agent tabs on **http://localhost:8091**.
+Browse to the session administration page and authenticate with the credentials from
+`docker-compose.yml` (defaults: **`admin` / `admin`** — change these for anything beyond
+local use). The same credentials guard the agent tabs.
 
-> To run two boxes at once, set `AGENT_BOX_SESSION_LIST_PORT` and `AGENT_BOX_TABS_PORT`
-> (in a `.env` file next to the compose file, or in the environment) rather than editing
-> the `ports:` mapping. Each variable is used twice — once to publish the port, once to
-> tell the container about it — so overriding the variable moves both, while editing
-> only the mapping leaves the session list handing out links to the old port.
+This repository's own compose file publishes the two servers on **8095** (session list)
+and **8096** (agent tabs), leaving the default ports free for a second box; the snippet
+under [Using it for a real project](#using-it-for-a-real-project) uses **8090** and
+**8091**. Check the `ports:` entries in the compose file you started.
+
+> **Changing the ports.** Each surface is named twice — once in `ports:` as
+> `<host>:<container>`, once in `environment:` as `SESSION_LIST_PUBLIC_PORT` /
+> `AGENT_TABS_PUBLIC_PORT` — because the container cannot see the host side of a
+> mapping and the session list has to be told which port to put in its links. Change
+> both together, or the page hands out links to a port this box does not answer on.
+> `agent-box/tests/test_ports.py` fails if they disagree. The container-side ports
+> (8090 and 8091) are fixed by the image; only the host side is yours to choose.
 
 Click **+ New session** to open a terminal tab. On first run, Claude Code will prompt
 you to **log in**. Follow the prompt in the terminal (it gives you a URL to open in your
@@ -255,9 +261,10 @@ Notes:
   project logs in once and keeps its own conversation history. Don't share it between
   projects: the admin page lists every session in the volume, so a shared one would
   offer another project's conversations alongside this project's.
-- `container_name` is fixed, so only one agent-box runs at a time; change it — and set
-  `AGENT_BOX_SESSION_LIST_PORT` / `AGENT_BOX_TABS_PORT` to free ports — if you need two
-  projects up simultaneously.
+- `container_name` is fixed, so only one agent-box runs at a time; change it — and move
+  both surfaces to free host ports (the `ports:` mapping *and* the matching
+  `SESSION_LIST_PUBLIC_PORT` / `AGENT_TABS_PUBLIC_PORT` entry) — if you need two projects
+  up simultaneously.
 
 ### Option B — build from a local checkout
 
@@ -323,10 +330,11 @@ All knobs are environment variables on the `agent` service in `docker-compose.ym
 | ----------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AGENT_NAME`                  | container name     | What this box is called in browser tabs: the session administration page is titled `Sessions: <name>` and every session tab ends in it, which is how two agent-boxes open at once stay apart. Unset, the container's own name is used (asked of Docker over the mounted socket), falling back to the hostname — so set it whenever the container name is not what you want to read in a tab.            |
 | `TTYD_USER` / `TTYD_PASSWORD` | `admin` / `admin`  | Login for the web terminal **and** the session administration page. Change for anything beyond localhost.                                                                                                                                                                                                                                                                                               |
-| `AGENT_TABS_PUBLIC_PORT`      | `8091`             | The **host** port the agent tabs are published on (the left half of the `8091:8091` mapping). The container can't discover this itself, and the session list needs it to build its links — so it must match the `ports:` entry, or every link on the page points at the wrong port. In the shipped compose files both come from `AGENT_BOX_TABS_PORT`, so overriding that variable moves them together. |
-| `SESSION_LIST_PUBLIC_PORT`    | `8090`             | The host port the session list is published on (from `AGENT_BOX_SESSION_LIST_PORT`). Only used for the "Container ready" line in the container log; the page itself works regardless.                                                                                                                                                                                                                   |
+| `AGENT_TABS_PUBLIC_PORT`      | `8091`             | The **host** port the agent tabs are published on (the left half of its `ports:` mapping; this repo's own compose file uses `8096`). The container can't discover this itself, and the session list needs it to build its links — so it must match the `ports:` entry, or every link on the page points at the wrong port. Change it and the `ports:` entry together. |
+| `SESSION_LIST_PUBLIC_PORT`    | `8090`             | The host port the session list is published on (the left half of its `ports:` mapping; this repo's own compose file uses `8095`). Only used for the "Container ready" line in the container log; the page itself works regardless.                                                                                                                                                                                                                   |
 | `CLAUDE_MODEL`                | `opus`             | Model passed to `claude --model` at launch. Accepts an alias (`opus`, `sonnet`, `fable`, ...) or a full model id.                                                                                                                                                                                                                                                                                       |
 | `DISABLE_PLAYWRIGHT`          | unset              | Set to `"true"` to disable the Playwright browser-automation plugin — useful when running agent-box for something other than web development. Clearing it re-enables the plugin on the next start.                                                                                                                                                                                                      |
+| `STARTUP_AUTO_UPDATE`         | `No`               | Whether to update the Claude Code CLI to the newest published version on every container start, before any session is launched. Only `Yes` (any case) enables it; unset or anything else keeps the version baked into the image. Off by default: it adds a sizeable download to every start and lets a running box drift from its image tag. The in-session auto-updater stays off either way — every session in the box shares one install, so startup is the only moment it can be replaced safely. A failed update is logged and the box starts on the image's version. |
 | `ALLOW_TERRAFORM_MODIFY`      | `Ask`<sup>\*</sup> | Whether the agent may run infrastructure-mutating Terraform (`apply`, `destroy`, `import`, `state rm`/`mv`, `taint`, ...). `No` blocks, `Ask` prompts once per terraform directory then remembers it, `Yes` runs freely. Read-only commands always run. <sup>\*</sup>Shipped as `Ask` in `docker-compose.yml`; if unset/unrecognized the guard fails **closed** (blocks).                               |
 | `REMOTE_CONTROL_NAME`         | unset              | When set, Claude Code launches with `--remote-control <name>-<suffix>`, enabling Remote Control and naming the session. Set the **base** name; each session appends its own suffix (its slugified title, or the head of its id) so concurrent sessions stay distinguishable. Leave unset to keep Remote Control off (the default).                                                                      |
 | `GH_TOKEN`                    | unset              | GitHub token for `git` and `gh` (see [GitHub access](#github-access)). `gh` reads it directly; git uses it through `gh auth git-credential`, so it is never written to disk. Supply it through a gitignored `.credentials` file loaded with `env_file:` — never in the compose file itself. Unset leaves GitHub unauthenticated (public reads still work). |
@@ -401,8 +409,8 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 | Piece                                     | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `docker-compose.yml`                      | Defines the `agent` service: build, the `agent-box:latest` image, the two published ports (session list `8090`, agent tabs `8091` — each written once as a variable and used both to publish and to tell the container), env vars, and the volume mounts. The `name:` field pins the Compose project name.                                                                                                                                                                                                                          |
-| `agent-box/Dockerfile`                    | Builds the image: Debian + Node.js + Claude Code CLI + docker CLI + Terraform + kubectl + ttyd + Playwright MCP with headless Chromium, plus everyday CLI tools (`ps`/`pkill`, `jq`, `less`, `nc`, `dig`, `unzip`, `wget`, `tree`, Python with pip/venv, ...), and creates the non-root `claude` user. Ships a healthcheck that probes **both** servers (8091 and `/healthz` on 8090). The Claude Code auto-updater is disabled — the image owns the version.                                                                       |
-| `agent-box/ep.sh`                         | Entrypoint (runs as **root**): fixes ownership, seeds first-run config, grants `claude` access to the Docker socket, installs plugins, resolves the box's name (`agent_name.sh`), then launches ttyd and — in a restart loop, so a crash there never costs you the terminal — the session administration server.                                                                                                                                                                                                                    |
+| `agent-box/Dockerfile`                    | Builds the image: Debian + Node.js + Claude Code CLI + docker CLI + Terraform + kubectl + ttyd + Playwright MCP with headless Chromium, plus everyday CLI tools (`ps`/`pkill`, `jq`, `less`, `nc`, `dig`, `unzip`, `wget`, `tree`, Python with pip/venv, ...), and creates the non-root `claude` user. Ships a healthcheck that probes **both** servers (8091 and `/healthz` on 8090). The in-session Claude Code auto-updater is disabled — the image owns the version, taken from the `CLAUDE_CODE_VERSION` build arg (CI resolves the newest published release on every build).                                                                       |
+| `agent-box/ep.sh`                         | Entrypoint (runs as **root**): fixes ownership, seeds first-run config, grants `claude` access to the Docker socket, optionally updates the CLI (`STARTUP_AUTO_UPDATE`), installs plugins, resolves the box's name (`agent_name.sh`), then launches ttyd and — in a restart loop, so a crash there never costs you the terminal — the session administration server.                                                                                                                                                                                                                    |
 | `agent-box/scripts/launch_session.sh`     | ttyd's entry point for every browser tab. Validates the session id the browser passed as `?arg=` — session-id format, a transcript that exists, and no live process holding it — before handing off to `start_claude.sh` under `su - claude`. Fails closed: only a clean "not live" answer permits a resume, so a second tab on a running session is refused rather than allowed to corrupt the transcript.                                                                                                                         |
 | `agent-box/scripts/start_claude.sh`       | Runs the Claude Code process for one tab: `claude --model "$CLAUDE_MODEL" --resume <id>`, or `--session-id <fresh uuid>` for a new session. Appends `--remote-control <name>-<suffix>` when `REMOTE_CONTROL_NAME` is set. Also starts the tab-title watcher alongside it.                                                                                                                                                                                                                                                           |
 | `agent-box/scripts/sessions.py`           | The session administration server on container port `8090` (stdlib only, runs as `claude`): the page itself at `/`, `GET /api/sessions`, `POST /api/sessions/<uuid>/delete`, and an unauthenticated `/healthz` for the healthcheck. Everything else is behind the same basic-auth credentials as ttyd.                                                                                                                                                                                                                              |
@@ -410,6 +418,7 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 | `agent-box/scripts/agent_name.sh`         | Resolves what this box is called, once at boot: `AGENT_NAME` if the operator set one, else the container's name from `docker inspect` over the mounted socket, else the hostname. Never fails — an unnamed box costs a tab title, not a boot.                                                                                                                                                                                                                                                                                       |
 | `agent-box/scripts/session_title.py`      | Names the browser tab. Started per session by `start_claude.sh`, it writes `Agent: <session name>` to the terminal as an OSC title and rewrites it whenever the session renames itself, then ends with the Claude process it was started from.                                                                                                                                                                                                                                                                                      |
 | `agent-box/scripts/sessions_page.html`    | The admin page's UI. `sessions.py` bakes `AGENT_TABS_PUBLIC_PORT` into it at startup so the rows can link to the agent tabs, and `AGENT_NAME` as the page's browser-tab title.                                                                                                                                                                                                                                                                                                                                                      |
+| `agent-box/scripts/update_claude_code.sh` | Optional boot-time CLI upgrade, gated by `STARTUP_AUTO_UPDATE` (only `Yes` enables it; fail-closed like the other flags). Runs as root before ttyd starts, so no session is holding the install it replaces. Never fails the boot — an unreachable registry leaves the box on the version its image shipped. |
 | `agent-box/scripts/install_plugins.sh`    | Idempotently installs **and enables** the plugins from `plugins.txt`.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `agent-box/scripts/statusline.js`         | Default Claude Code status line (model, git branch, context usage, plan usage, session cost). Wired into `settings.json` by `ep.sh` unless a `statusLine` is already configured.                                                                                                                                                                                                                                                                                                                                                    |
 | `agent-box/scripts/git-guard.js`          | `PreToolUse` hook enforcing `ALLOW_GIT_WRITE` (`No`/`Yes`; fail-closed): denies git write subcommands (`commit`, `push`, `pull`, `merge`, `rebase`, `reset`, `stash`, `checkout`/`switch`, branch/tag creation, ...) `restore`/`clean`, remote/config changes, ...) and any `gh` command outside a read allowlist (`view`/`list`/`status`/`diff`/`checks`/`watch`, `search`, clone/download, GET-only `gh api`, GraphQL queries). Always denies printing the token (`gh auth token`, `--show-token`). Registered idempotently in `settings.json` by `ep.sh`. |
@@ -417,7 +426,7 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 | `agent-box/CLAUDE.md`                     | The agent's global operating manual + guardrails, refreshed into the volume on every start.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `agent-box/skills/`                       | Skills baked into the image and synced to `~/.claude/skills/` on every start, so every deployment has them offline. Project-specific skills belong in the workspace at `/workspace/.claude/skills/` instead, where Claude Code reads them in place.                                                                                                                                                                                                                                                                                 |
 | `agent-box/scripts/sync_claude_home.sh`   | Mirrors the baked `~/.claude` content (manual, skills) into the `claude-data` volume on every start. Needed because a named volume is pre-populated from the image only while empty — afterwards the volume wins, so a `COPY` alone would never reach an existing box. Image wins for what it ships; anything else in the volume is untouched; content dropped from a later image is removed.                                                                                                                                       |
-| `.github/workflows/publish-agent-box.yml` | Builds the image on pushes to `main` touching `agent-box/**` and pushes `latest` + `sha-<commit>` tags to ghcr.io.                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `.github/workflows/publish-agent-box.yml` | Builds the image on pushes to `main` touching `agent-box/**` and pushes `latest` + `sha-<commit>` tags to ghcr.io. Resolves the newest published Claude Code version and passes it as `CLAUDE_CODE_VERSION`, so the build cache cannot keep republishing a stale CLI.                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ### Startup lifecycle
 
@@ -431,15 +440,20 @@ only sets the default when no `statusLine` is configured, so your changes stick.
    socket's GID (it never `chmod`s the socket itself, which would alter the host's
    inode). It registers the safety hooks (`terraform-guard.js`, `git-guard.js`) and
    regenerates the `claude` user's `~/.gitconfig` from `GH_TOKEN` / `GIT_USER_*`.
-3. It installs and enables plugins from `plugins.txt` as the `claude` user (idempotent).
-4. It launches **ttyd** on port `8091` with `-a` (so a tab can name its session as
+3. If `STARTUP_AUTO_UPDATE` is `Yes`, it updates the Claude Code CLI to the newest
+   published version (`update_claude_code.sh`). This is the one safe moment: it runs as
+   root, which the root-owned npm prefix needs, and before ttyd exists, so no session is
+   holding the install being replaced. A failure here is a warning, never a failed boot.
+4. It installs and enables plugins from `plugins.txt` as the `claude` user (idempotent),
+   using whichever CLI version step 3 left in place.
+5. It launches **ttyd** on port `8091` with `-a` (so a tab can name its session as
    `?arg=<session-id>`) and no client limit. Every connection runs
    `launch_session.sh` (through its `agent-session` alias), which validates that id and
    then starts one Claude Code process as `claude`. There is no global "one client" cap
    any more — the rule is per session: one tab per conversation, enforced by the
    launcher. ttyd runs with **no fixed title**, so each session can name its own browser
    tab.
-5. It launches the **session administration server** on port `8090` as `claude`,
+6. It launches the **session administration server** on port `8090` as `claude`,
    supervised by a restart loop, and then tails the container log.
 
 ### Persistence
@@ -509,10 +523,19 @@ This is a development convenience, not a sandbox. Treat it accordingly:
 - **Apply a change to `Dockerfile`/`ep.sh`/scripts:** these are baked into the image, so
   rebuild and recreate — `docker compose up --build -d`. A plain `restart` reuses the old
   image.
-- **Update Claude Code:** the in-container auto-updater is disabled (the npm global dir
-  is root-owned and the version should be reproducible anyway). Rebuild the image to pull
-  the latest CLI, or pin a version in the Dockerfile
-  (`npm install -g @anthropic-ai/claude-code@<version>`).
+- **Update Claude Code:** the in-session auto-updater is disabled (the npm global dir is
+  root-owned, sessions run as `claude`, and every session in the box shares the one
+  install). Three ways to move the version:
+  - **Pull a newer image** — CI resolves the newest published CLI on every build and
+    bakes that exact version in, so `latest` always carries a current CLI.
+  - **Rebuild locally** — `docker compose up --build -d`. The install layer is cached per
+    version string, so pass the version to move a cached build:
+    `CLAUDE_CODE_VERSION=$(npm view @anthropic-ai/claude-code version) docker compose up --build -d`.
+    The same variable pins an older version.
+  - **Let the box update itself** — set `STARTUP_AUTO_UPDATE: "Yes"` on the `agent`
+    service. Every container start then installs the newest published CLI before any
+    session launches. Costs a large download per start, and the box's version no longer
+    follows its image tag.
 - **Change the model:** set `CLAUDE_MODEL` on the `agent` service and recreate it. The
   next session launch picks it up.
 - **"Refusing to resume: session ... is already open in another tab":** that session is
@@ -521,8 +544,8 @@ This is a development convenience, not a sandbox. Treat it accordingly:
 - **"Refusing to resume: no transcript for ...":** the session list handed out a link to
   a port that is not this box's agent tabs — usually another agent-box, which is asked
   for a session it has never heard of. `AGENT_TABS_PUBLIC_PORT` doesn't match the host
-  port the tabs are published on in `ports:`. Set both from `AGENT_BOX_TABS_PORT` as the
-  compose files above do, and recreate the service — the port is baked into the page when
+  port the tabs are published on in `ports:`. Set the two to the same value and recreate
+  the service — the port is baked into the page when
   the server starts. (The same message is genuine when the transcript really is gone,
   e.g. deleted from the session list or aged out by Claude Code's own cleanup.)
 - **Add a plugin:** add a line to `agent-box/plugins.txt`, then rebuild (or rerun

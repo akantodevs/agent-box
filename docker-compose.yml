@@ -5,6 +5,14 @@ services:
     build:
       context: agent-box
       dockerfile: Dockerfile
+      args:
+        # Which Claude Code version a local build bakes in. Defaults to the
+        # newest published release; export CLAUDE_CODE_VERSION=<version> to pin
+        # one. Note that Docker caches the install layer per version string, so
+        # the default only fetches a newer CLI once a build actually resolves a
+        # different version — CI passes the resolved number for exactly that
+        # reason. STARTUP_AUTO_UPDATE below is the runtime counterpart.
+        CLAUDE_CODE_VERSION: "${CLAUDE_CODE_VERSION:-latest}"
     # Pin the built image name/tag. Without this, Compose auto-names it
     # "<project>-<service>" (i.e. "agent-box-agent"), which is confusing next to
     # the "agent-box" container name.
@@ -32,6 +40,15 @@ services:
 
       # Set model Claude Code launches with (sonnet/opus/fable/..)
       CLAUDE_MODEL: "opus"
+
+      # Update the Claude Code CLI to the newest published version on every
+      # container start, before any session is launched. Only "Yes" (any case)
+      # enables it; unset or anything else keeps the version baked into the
+      # image. Off by default because it adds a sizeable download to every
+      # start and makes a running box drift from its image tag. The in-session
+      # auto-updater stays off either way — all sessions share one install, so
+      # startup is the only safe moment to replace it.
+      STARTUP_AUTO_UPDATE: "No"
 
       # Controls whether the agent may run infrastructure-mutating Terraform
       # (apply/destroy/import/state rm|mv/taint/...). Read-only commands (plan,

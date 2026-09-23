@@ -174,6 +174,18 @@ if [ -n "${GH_TOKEN:-}" ]; then
     echo "GitHub credentials configured from GH_TOKEN (git write mode: ${ALLOW_GIT_WRITE:-unset})."
 fi
 
+# Optionally refresh the CLI itself before anything uses it, per
+# STARTUP_AUTO_UPDATE (only "Yes" enables it; see the script for why startup is
+# the one safe moment). Runs ahead of the plugin install below so plugins are
+# resolved by the CLI this boot will actually serve, and well ahead of ttyd so
+# no session can be holding the install being replaced. The script never exits
+# non-zero — the `||` is for the case where it is missing entirely, since this
+# whole file runs under `set -e` and a failed update is never a reason not to
+# boot.
+STARTUP_AUTO_UPDATE="${STARTUP_AUTO_UPDATE:-}" \
+    /opt/agent-box/scripts/update_claude_code.sh \
+    || echo "WARN: startup CLI update step failed to run"
+
 # Install Claude Code plugins listed in plugins.txt (idempotent; runs as claude).
 # Both values are passed explicitly because `su -` is a login shell and strips
 # the inherited environment; they travel as command-prefix assignments carried

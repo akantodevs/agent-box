@@ -100,12 +100,18 @@ class HealthcheckTest(unittest.TestCase):
 class ComposeTest(unittest.TestCase):
     """The published mapping and the port the page is told about.
 
-    These two are the pair that caused the bug this file exists to prevent, and
-    they are kept in agreement by construction: one `${VAR:-default}` per
-    surface, written once in `ports:` and once in `environment:`. This test
-    pins that construction — that both places name the *same* variable with the
-    *same* default — because the two are far enough apart in the file to be
-    edited independently.
+    These two are the pair that caused the bug this file exists to prevent: the
+    container cannot see the host side of a `ports:` mapping, so the page
+    advertises whatever `environment:` says — and if that is not the port the
+    mapping publishes, every link on the page points somewhere this box does not
+    answer. They sit far enough apart in the file to be edited independently,
+    which is why their agreement is asserted here rather than trusted.
+
+    Only the agreement is pinned, not how it is spelled. A deployment may use
+    plain numbers (as this repo's own compose file does, publishing the two
+    servers on 8095/8096 to stay clear of another box on the defaults) or a
+    `${VAR:-default}` expression in both places; either passes, as long as the
+    two sides say the same thing.
     """
 
     # env var in the container -> container port it describes
@@ -118,8 +124,20 @@ class ComposeTest(unittest.TestCase):
         self.compose = read(REPO, "docker-compose.yml")
 
     def published(self, container_port):
-        """The host side of the mapping onto this container port."""
-        found = re.findall(r'-\s*"([^"]+):%d"' % container_port, self.compose)
+        """The host side of the mapping onto this container port.
+
+        A `ports:` entry is `[<host-ip>:]<host>:<container>[/proto]`, quoted or
+        bare. Only the host port is returned: an address, if one is given, says
+        where the box listens, not which port the links must name. The host port
+        is either a bare value or a `${VAR:-default}` expression, which contains
+        a colon of its own and so is matched as a whole.
+        """
+        found = re.findall(
+            r'^\s*-\s*"?(?:\d+(?:\.\d+){3}:)?(\$\{[^}]*\}|[^":\s]+):%d(?:/\w+)?"?\s*(?:#.*)?$'
+            % container_port,
+            self.compose,
+            re.MULTILINE,
+        )
         self.assertEqual(
             1, len(found),
             "expected exactly one published mapping onto container port %d, found %r"
@@ -129,7 +147,11 @@ class ComposeTest(unittest.TestCase):
 
     def advertised(self, env_var):
         """The value handed to the container as this environment variable."""
-        found = re.findall(r'%s:\s*"([^"]+)"' % env_var, self.compose)
+        found = re.findall(
+            r'^\s*%s:\s*"?([^"\s#]+)"?\s*(?:#.*)?$' % env_var,
+            self.compose,
+            re.MULTILINE,
+        )
         self.assertEqual(
             1, len(found),
             "expected exactly one %s entry, found %r" % (env_var, found),
@@ -139,20 +161,17 @@ class ComposeTest(unittest.TestCase):
     def test_each_surface_publishes_and_advertises_one_value(self):
         for env_var, container_port in self.SURFACES:
             with self.subTest(surface=env_var):
-                self.assertEqual(self.published(container_port), self.advertised(env_var))
-
-    def test_the_value_is_an_overridable_variable_defaulting_to_the_container_port(self):
-        # The default matters as much as the variable: an operator who never
-        # sets it gets host and container ports that match, which is the state
-        # the whole scheme is designed around.
-        for env_var, container_port in self.SURFACES:
-            with self.subTest(surface=env_var):
-                expression = self.advertised(env_var)
-                match = re.match(r"^\$\{[A-Z0-9_]+:-(\d+)\}$", expression)
-                self.assertIsNotNone(
-                    match, "%s should be ${VAR:-<default>}, is %r" % (env_var, expression)
+                self.assertEqual(
+                    self.published(container_port), self.advertised(env_var),
+                    "the host port published onto %d and the %s the page is told "
+                    "about must be the same value" % (container_port, env_var),
                 )
-                self.assertEqual(container_port, int(match.group(1)))
+
+    def test_the_two_surfaces_do_not_share_a_host_port(self):
+        """One port cannot serve both, and the collision is silent: compose
+        would start the box, and one of the two servers would be unreachable."""
+        hosts = [self.published(container_port) for _, container_port in self.SURFACES]
+        self.assertEqual(len(hosts), len(set(hosts)), hosts)
 
     def test_the_retired_variables_are_gone(self):
         # They were removed rather than aliased, so a compose file still setting
