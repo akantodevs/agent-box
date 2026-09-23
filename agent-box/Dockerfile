@@ -62,9 +62,23 @@ RUN KVER="$(curl -fsSL https://dl.k8s.io/release/stable.txt)" \
     && chmod +x /usr/local/bin/kubectl \
     && rm -f /tmp/kubectl.sha256
 
-# Install Claude Code CLI (image owns the version; update by rebuilding, not in-container)
+# Install Claude Code CLI. The image owns the version; update by rebuilding, not
+# in-container (the npm prefix is root-owned and sessions run as `claude`, so the
+# in-session auto-updater is off — see STARTUP_AUTO_UPDATE for the opt-in that
+# refreshes it at container start instead).
+#
+# The version arrives as a build arg rather than being left to `@latest`, because
+# a bare `npm install -g <pkg>` is a build-cache hit forever: the layer is keyed on
+# the command text, which never changes, so every rebuild would reinstall whatever
+# version was current when the layer was first cached. Substituting the resolved
+# version into the command is what lets a new release invalidate the layer. CI
+# resolves it from the registry on every run (publish-agent-box.yml), so published
+# images always carry the newest CLI. A local `docker compose up --build` gets
+# `latest` — and that layer's cache, so pass the arg (or export CLAUDE_CODE_VERSION
+# for the compose file to forward) when a local build must move.
+ARG CLAUDE_CODE_VERSION=latest
 ENV DISABLE_AUTOUPDATER=1
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
 # Create non-root user for Claude Code
 RUN useradd -m -s /bin/bash claude
