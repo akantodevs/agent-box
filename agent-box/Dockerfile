@@ -62,6 +62,21 @@ RUN KVER="$(curl -fsSL https://dl.k8s.io/release/stable.txt)" \
     && chmod +x /usr/local/bin/kubectl \
     && rm -f /tmp/kubectl.sha256
 
+# Install sops (encrypted secrets kept in git repos) plus age, its usual key
+# backend. sops is a static binary from the GitHub release, fetched like kubectl
+# and checked against the release's checksums file. The version is pinned rather
+# than resolved at build time so the layer moves only when this line does — bump
+# SOPS_VERSION to upgrade. age comes from Debian. Keys are supplied per
+# deployment (SOPS_AGE_KEY_FILE / SOPS_AGE_KEY), never baked here.
+ARG SOPS_VERSION=3.13.3
+RUN apt-get update && apt-get install -y --no-install-recommends age && rm -rf /var/lib/apt/lists/* \
+    && SOPS_BIN="sops-v${SOPS_VERSION}.linux.${TARGETARCH}" \
+    && curl -fsSL -o "/tmp/${SOPS_BIN}" "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/${SOPS_BIN}" \
+    && curl -fsSL -o /tmp/sops.checksums.txt "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.checksums.txt" \
+    && (cd /tmp && grep " ${SOPS_BIN}\$" sops.checksums.txt | sha256sum --check) \
+    && install -m 0755 "/tmp/${SOPS_BIN}" /usr/local/bin/sops \
+    && rm -f "/tmp/${SOPS_BIN}" /tmp/sops.checksums.txt
+
 # Install Claude Code CLI. The image owns the version; update by rebuilding, not
 # in-container (the npm prefix is root-owned and sessions run as `claude`, so the
 # in-session auto-updater is off — see STARTUP_AUTO_UPDATE for the opt-in that

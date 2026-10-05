@@ -205,12 +205,13 @@ launch() {
     # raw mode, i.e. during startup, and ending a session a second after it
     # began — with its transcript intact and resumable — beats leaking one.
     trap hangup HUP TERM INT
-    # GH_TOKEN is the one secret here, and it is the one value that does *not*
-    # travel in the command string: su's argv is readable by every process in
-    # the container (ps, /proc/<pid>/cmdline), the environment of another
-    # user's process is not. `-w` carries it through the login from this
-    # script's own environment; when it is unset, nothing is carried.
-    su -w GH_TOKEN - claude -c "cd /workspace \
+    # The secrets — GH_TOKEN and the sops age key (SOPS_AGE_KEY, or the path in
+    # SOPS_AGE_KEY_FILE) — are the values that do *not* travel in the command
+    # string: su's argv is readable by every process in the container (ps,
+    # /proc/<pid>/cmdline), the environment of another user's process is not.
+    # `-w` carries them through the login from this script's own environment;
+    # whichever is unset, nothing is carried for it.
+    su -w GH_TOKEN,SOPS_AGE_KEY,SOPS_AGE_KEY_FILE - claude -c "cd /workspace \
 && CLAUDE_MODEL=$(quote "${CLAUDE_MODEL:-}") \
 ALLOW_TERRAFORM_MODIFY=$(quote "${ALLOW_TERRAFORM_MODIFY:-}") \
 REMOTE_CONTROL_NAME=$(quote "${REMOTE_CONTROL_NAME:-}") \

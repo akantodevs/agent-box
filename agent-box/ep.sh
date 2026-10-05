@@ -152,6 +152,9 @@ if (changed) fs.writeFileSync(f, JSON.stringify(s, null, 2) + "\n");
 # what every check downstream — here, launch_session.sh's su -w, gh itself —
 # means by it.
 [ -n "${GH_TOKEN:-}" ] || unset GH_TOKEN
+# The same for the sops age key, which launch_session.sh carries the same way.
+[ -n "${SOPS_AGE_KEY:-}" ] || unset SOPS_AGE_KEY
+[ -n "${SOPS_AGE_KEY_FILE:-}" ] || unset SOPS_AGE_KEY_FILE
 GITCONFIG="$CLAUDE_HOME/.gitconfig"
 (
     set -e

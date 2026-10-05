@@ -51,13 +51,19 @@ SESSION_STORE = os.path.join(SCRIPTS_DIR, "session_store.py")
 # The one path the script must never actually run.
 REAL_START_CLAUDE = os.path.join(SCRIPTS_DIR, "start_claude.sh")
 
+# What su carries through the login from the launcher's own environment: the
+# secrets, which must never be put in the world-readable command string.
+WHITELIST = "GH_TOKEN,SOPS_AGE_KEY,SOPS_AGE_KEY_FILE"
+
 SU_STUB = """#!/bin/sh
 # Records its argv NUL-separated and exits 0. NUL is the separator because the
-# `su -c` command string may contain anything, newlines included. GH_TOKEN is
-# recorded separately: it must reach su through the environment (for its -w
-# whitelist), never through argv.
+# `su -c` command string may contain anything, newlines included. GH_TOKEN and
+# the sops key are recorded separately: they must reach su through the
+# environment (for its -w whitelist), never through argv.
 printf '%s\\0' "$@" > "$SU_ARGV_FILE"
 printf '%s' "${GH_TOKEN-<unset>}" > "$SU_ARGV_FILE.token"
+printf '%s' "${SOPS_AGE_KEY-<unset>}" > "$SU_ARGV_FILE.SOPS_AGE_KEY"
+printf '%s' "${SOPS_AGE_KEY_FILE-<unset>}" > "$SU_ARGV_FILE.SOPS_AGE_KEY_FILE"
 exit 0
 """
 
@@ -198,6 +204,8 @@ class LaunchTestCase(unittest.TestCase):
         # The test runner may itself hold a real token; it must not leak into
         # a recorded argv file, and "unset" is the default being tested.
         env.pop("GH_TOKEN", None)
+        env.pop("SOPS_AGE_KEY", None)
+        env.pop("SOPS_AGE_KEY_FILE", None)
         for key, value in overrides.items():
             if value is None:
                 env.pop(key, None)
@@ -244,13 +252,18 @@ class LaunchTestCase(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         argv = self.su_argv()
         self.assertIsNotNone(argv, "su was not invoked")
-        self.assertEqual(["-w", "GH_TOKEN", "-", "claude", "-c"], argv[:5])
+        self.assertEqual(["-w", WHITELIST, "-", "claude", "-c"], argv[:5])
         self.assertEqual(6, len(argv), argv)
         return argv[5]
 
     def su_token(self):
         """GH_TOKEN as su saw it in its environment ("<unset>" if absent)."""
         with open(self.su_argv_file + ".token", encoding="utf-8") as handle:
+            return handle.read()
+
+    def su_env(self, name):
+        """A whitelisted variable as su saw it ("<unset>" if absent)."""
+        with open(self.su_argv_file + "." + name, encoding="utf-8") as handle:
             return handle.read()
 
     def eval_command(self, command):
@@ -433,6 +446,23 @@ class EnvironmentTest(LaunchTestCase):
     def test_no_token_is_invented_when_unset(self):
         self.launched_command(self.run_script())
         self.assertEqual("<unset>", self.su_token())
+
+    def test_the_sops_key_travels_in_the_environment_not_argv(self):
+        # Same reasoning as GH_TOKEN: a private age key in argv would be
+        # readable by every process in the container.
+        key = "AGE-SECRET-KEY-1NOTAREALKEY"
+        result = self.run_script(SOPS_AGE_KEY=key, SOPS_AGE_KEY_FILE="/run/k.txt")
+        command = self.launched_command(result)
+        for arg in self.su_argv():
+            self.assertNotIn(key, arg)
+        self.assertNotIn("SOPS_AGE_KEY", command)
+        self.assertEqual(key, self.su_env("SOPS_AGE_KEY"))
+        self.assertEqual("/run/k.txt", self.su_env("SOPS_AGE_KEY_FILE"))
+
+    def test_no_sops_key_is_invented_when_unset(self):
+        self.launched_command(self.run_script())
+        self.assertEqual("<unset>", self.su_env("SOPS_AGE_KEY"))
+        self.assertEqual("<unset>", self.su_env("SOPS_AGE_KEY_FILE"))
 
     def test_a_quote_in_an_environment_value_cannot_break_out(self):
         # These come from docker-compose.yml rather than from a URL, but they
