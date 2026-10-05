@@ -420,6 +420,28 @@ Revoke the box by removing its public key from `.sops.yaml` and running
 `sops updatekeys` again; secrets it could already read should then be rotated. As with
 `GH_TOKEN`, the agent can read the key — that is what lets it decrypt.
 
+#### Infrastructure secrets: `secrets` and `tf`
+
+Two commands on `PATH` wrap sops for Terraform roots kept under
+`/workspace/infrastructure/<env>/` (e.g. `stage`, `production`). An environment is any
+such directory holding a sops config `.sops-infra.yaml` and a dotenv file
+`secrets.enc.env` encrypted with it:
+
+```bash
+secrets stage edit                       # edit the secrets in $EDITOR
+secrets stage exec -- terraform plan     # run any command with them in its environment
+secrets stage updatekeys                 # re-encrypt after changing the recipients
+cd /workspace/infrastructure/stage/3-app && tf plan   # terraform with stage's secrets
+```
+
+`tf` picks the environment from the directory it runs in; outside an environment
+(including shared dirs like `infrastructure/modules`) it is plain `terraform`. A
+directory with `secrets.enc.env` but no `.sops-infra.yaml` is treated as a broken
+environment: `tf` refuses to run there instead of falling back to terraform without
+its secrets.
+`terraform-guard.js` treats `tf` as `terraform`, so `tf apply` is gated by
+`ALLOW_TERRAFORM_MODIFY` exactly like `terraform apply`.
+
 A default **status line** (model, git branch, context usage, plan usage, session cost)
 ships in the image. To customize it, edit the `statusLine` entry in the volume's
 `~/.claude/settings.json` (or run `/statusline` inside Claude Code) — the entrypoint
@@ -447,7 +469,8 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 | `agent-box/scripts/install_plugins.sh`    | Idempotently installs **and enables** the plugins from `plugins.txt`.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `agent-box/scripts/statusline.js`         | Default Claude Code status line (model, git branch, context usage, plan usage, session cost). Wired into `settings.json` by `ep.sh` unless a `statusLine` is already configured.                                                                                                                                                                                                                                                                                                                                                    |
 | `agent-box/scripts/git-guard.js`          | `PreToolUse` hook enforcing `ALLOW_GIT_WRITE` (`No`/`Yes`; fail-closed): denies git write subcommands (`commit`, `push`, `pull`, `merge`, `rebase`, `reset`, `stash`, `checkout`/`switch`, branch/tag creation, ...) `restore`/`clean`, remote/config changes, ...) and any `gh` command outside a read allowlist (`view`/`list`/`status`/`diff`/`checks`/`watch`, `search`, clone/download, GET-only `gh api`, GraphQL queries). Always denies printing the token (`gh auth token`, `--show-token`). Registered idempotently in `settings.json` by `ep.sh`. |
-| `agent-box/scripts/terraform-guard.js`    | `PreToolUse`/`PostToolUse` hook enforcing `ALLOW_TERRAFORM_MODIFY` (`No`/`Ask`/`Yes`; fail-closed) for infrastructure- or state-mutating Terraform (`apply`, `destroy`, `import`, `state rm`/`mv`, `taint`, ...); read-only commands (`plan`, `validate`, `show`, ...) pass through. In `Ask` mode it prompts once per terraform directory and remembers it (so stage vs prod ask separately), persisting approvals in `~/.claude/terraform-approvals.json`. Registered for both events idempotently in `settings.json` by `ep.sh`. |
+| `agent-box/scripts/terraform-guard.js`    | `PreToolUse`/`PostToolUse` hook enforcing `ALLOW_TERRAFORM_MODIFY` (`No`/`Ask`/`Yes`; fail-closed) for infrastructure- or state-mutating Terraform (`apply`, `destroy`, `import`, `state rm`/`mv`, `taint`, ...); read-only commands (`plan`, `validate`, `show`, ...) pass through. Recognizes the `tf` wrapper as terraform. In `Ask` mode it prompts once per terraform directory and remembers it (so stage vs prod ask separately), persisting approvals in `~/.claude/terraform-approvals.json`. Registered for both events idempotently in `settings.json` by `ep.sh`. |
+| `agent-box/bin/`                          | Commands copied onto `PATH` (`/usr/local/bin`): `secrets` (an environment's sops-encrypted secrets under `/workspace/infrastructure/<env>`) and `tf` (Terraform with those secrets loaded). See [Infrastructure secrets](#infrastructure-secrets-secrets-and-tf). |
 | `agent-box/CLAUDE.md`                     | The agent's global operating manual + guardrails, refreshed into the volume on every start.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `agent-box/skills/`                       | Skills baked into the image and synced to `~/.claude/skills/` on every start, so every deployment has them offline. Project-specific skills belong in the workspace at `/workspace/.claude/skills/` instead, where Claude Code reads them in place.                                                                                                                                                                                                                                                                                 |
 | `agent-box/scripts/sync_claude_home.sh`   | Mirrors the baked `~/.claude` content (manual, skills) into the `claude-data` volume on every start. Needed because a named volume is pre-populated from the image only while empty — afterwards the volume wins, so a `COPY` alone would never reach an existing box. Image wins for what it ships; anything else in the volume is untouched; content dropped from a later image is removed.                                                                                                                                       |

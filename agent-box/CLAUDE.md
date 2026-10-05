@@ -69,6 +69,22 @@ right here:
   `SOPS_AGE_KEY`, or cloud KMS credentials). Edit secrets with `sops set` /
   `sops --decrypt` / `sops --encrypt --in-place`, not `sops <file>` (that opens an
   editor). Never write decrypted output under `/workspace` or into the transcript.
+- **`secrets`** / **`tf`** — infrastructure secrets for Terraform roots under
+  `/workspace/infrastructure/<env>/` (each env has `.sops-infra.yaml` +
+  `secrets.enc.env`). `secrets <env> exec -- <cmd>` runs a command with that env's
+  secrets loaded; `tf` is `terraform` with them loaded. Don't use
+  `secrets <env> edit` — it opens an editor. **`tf` or `terraform`:**
+  - Inside `/workspace/infrastructure/<env>/…`, always `tf`. Bare `terraform` there
+    runs without the env's credentials — or with whatever ambient ones the shell
+    holds, i.e. possibly against the wrong account.
+  - `tf` picks the env from the **working directory**, not `-chdir`: run
+    `cd <root> && tf plan`, never `tf -chdir=<root> …` from outside the env.
+  - Elsewhere (shared `infrastructure/modules`, any other Terraform), use
+    `terraform`; `tf` there is plain `terraform` anyway.
+  - If `tf` refuses because an env has `secrets.enc.env` but no
+    `.sops-infra.yaml`, report it — don't work around it with `terraform`.
+
+  `tf` is guarded exactly like `terraform` (see Guardrails).
 - **`docker` / `docker compose`** — drive *this* Compose stack over the mounted
   socket (that's the one legitimate use of Docker — operating the stack, not
   wrapping local tools).
@@ -217,7 +233,8 @@ For log analysis, exception triage, incident response, and similar operational r
   `ALLOW_TERRAFORM_MODIFY` env var (set per deployment in `docker-compose.yml`):
   `No` blocks it, `Ask` requires explicit user confirmation, `Yes` allows it;
   unset/unrecognized fails closed (blocks). This is enforced by the
-  `terraform-guard.js` hook (registered for both `PreToolUse` and `PostToolUse`).
+  `terraform-guard.js` hook (registered for both `PreToolUse` and `PostToolUse`),
+  which treats the `tf` wrapper the same as `terraform`.
   In `Ask` mode the hook prompts **once per terraform directory** and remembers
   that directory after you approve, so a sibling root (e.g. stage vs prod) still
   asks separately; approvals persist in `~/.claude/terraform-approvals.json`.

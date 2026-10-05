@@ -127,6 +127,12 @@ RUN chmod +x /opt/agent-box/scripts/*.sh \
 # anyone wants at the end of it. ep.sh runs the session launcher through here.
     && ln -s /opt/agent-box/scripts/launch_session.sh /usr/local/bin/agent-session
 
+# Commands for users and agents alike, straight onto PATH: `secrets` (an
+# environment's sops-encrypted secrets under /workspace/infrastructure/<env>) and
+# `tf` (terraform with those secrets loaded; terraform-guard.js treats it as
+# terraform). The executable bit is recorded in git, so COPY keeps it.
+COPY bin/ /usr/local/bin/
+
 # Bake the content the image owns inside ~/.claude, laid out exactly as it lands there.
 # ep.sh runs sync_claude_home.sh on every startup to copy this into the claude-data
 # volume: a named volume is pre-populated from the image only while it is EMPTY, so a

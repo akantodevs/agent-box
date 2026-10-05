@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Terraform with the secrets of the environment you are in. Baked into agent-box at /usr/local/bin.
+# Run it anywhere inside /workspace/infrastructure/<env>/…:
+#
+#   cd /workspace/infrastructure/stage/3-app && tf plan     # = secrets stage exec -- terraform plan
+#
+# Anywhere else (including shared dirs such as infrastructure/modules) it runs plain terraform. The
+# environment comes from the working directory, not -chdir: cd into the root you mean to run.
+# An environment dir with secrets.enc.env but no .sops-infra.yaml is an error, not a fallback.
+#
+# agent-box's terraform-guard treats `tf` like `terraform`, so ALLOW_TERRAFORM_MODIFY governs
+# `tf apply`, `tf destroy`, … exactly as it does the unwrapped commands.
+set -euo pipefail
+
+# AGENT_BOX_INFRA_DIR exists for the tests; deployments keep their infrastructure here.
+infra_dir="${AGENT_BOX_INFRA_DIR:-/workspace/infrastructure}"
+infra_dir="$(cd "$infra_dir" 2>/dev/null && pwd -P || echo "$infra_dir")"
+cwd="$(pwd -P)"
+
+# The environment is the first path component below infra_dir, if it has a sops config (see secrets).
+# Encrypted secrets without that config is a broken environment, not a shared dir: refuse rather than
+# run terraform without its credentials (or with whatever ambient ones the shell happens to hold).
+env=""
+if [[ "$cwd" == "$infra_dir"/* ]]; then
+    env="${cwd#"$infra_dir"/}"
+    env="${env%%/*}"
+    if [[ ! -f "$infra_dir/$env/.sops-infra.yaml" ]]; then
+        if [[ -e "$infra_dir/$env/secrets.enc.env" ]]; then
+            echo "tf: $infra_dir/$env has secrets.enc.env but no sops config $infra_dir/$env/.sops-infra.yaml;" \
+                "refusing to run terraform without the '$env' secrets" >&2
+            exit 1
+        fi
+        env=""
+    fi
+fi
+
+if [[ -n "$env" ]]; then
+    exec secrets "$env" exec -- terraform "$@"
+fi
+exec terraform "$@"

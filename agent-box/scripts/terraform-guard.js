@@ -25,6 +25,10 @@
 // Approvals persist in ~/.claude/terraform-approvals.json (the claude-data
 // volume). Remove an entry (or the file) to re-arm prompting for that path.
 //
+// Besides `terraform` itself, the baked `tf` wrapper (agent-box/bin/tf) counts as
+// terraform: it passes its arguments straight through (with an environment's
+// secrets loaded), so `tf apply` is classified exactly like `terraform apply`.
+//
 // Fail-open on anything we can't classify (non-Bash, no command, unparseable
 // payload): the guard is a safety net around recognized mutating verbs, never a
 // reason to wedge Bash. The fail-CLOSED default applies only once a mutating
@@ -35,6 +39,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// Command names (matched by basename) that run terraform with their arguments.
+const TERRAFORM_COMMANDS = new Set(['terraform', 'tf']);
 // Subcommands that change infrastructure or remote state.
 const MUTATING = new Set(['apply', 'destroy', 'import', 'taint', 'untaint', 'force-unlock']);
 // `terraform state <sub>` variants that rewrite state.
@@ -66,9 +72,10 @@ function findMutating(command, cwd) {
       continue;
     }
     for (let i = 0; i < tokens.length; i++) {
-      // Match the terraform binary by basename so /usr/bin/terraform and a bare
-      // `terraform` both hit. Leading `ENV=val` assignments simply don't match.
-      if (tokens[i].split('/').pop() !== 'terraform') continue;
+      // Match the terraform binary (or the tf wrapper) by basename so
+      // /usr/bin/terraform and a bare `terraform` both hit. Leading `ENV=val`
+      // assignments simply don't match.
+      if (!TERRAFORM_COMMANDS.has(tokens[i].split('/').pop())) continue;
       // Walk global flags before the subcommand, capturing -chdir=DIR.
       let chdir = null;
       let j = i + 1;
