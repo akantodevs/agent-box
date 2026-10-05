@@ -50,6 +50,17 @@ class ReleaseWorkflowTest(unittest.TestCase):
     def test_waits_for_the_main_build(self):
         self.assertRegex(self.workflow, r"docker buildx imagetools inspect")
 
+    def test_version_tag_keeps_the_v(self):
+        # Published images are tagged like the git tags: v1.8.0, v1.8.1, ...
+        self.assertIn('echo "TARGET=$image:$TAG"', self.workflow)
+
+    def test_refuses_to_overwrite_a_version(self):
+        self.assertRegex(self.workflow, r'(?s)if docker buildx imagetools inspect "\$TARGET".*already exists')
+
+    def test_is_the_only_tag_workflow(self):
+        # tag-semver.yml promoted :latest, racing main's build of the tagged commit.
+        self.assertFalse(os.path.exists(os.path.join(WORKFLOWS, "tag-semver.yml")))
+
     def test_never_moves_latest(self):
         self.assertNotRegex(self.workflow, r":latest\b")
 

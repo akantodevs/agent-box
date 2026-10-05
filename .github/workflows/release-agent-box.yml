@@ -1,10 +1,13 @@
 name: Release agent-box image
 
 # Gives a version tag the image that publish-agent-box.yml already built for its
-# commit: pushing tag v1.8.1 makes ghcr.io/<owner>/agent-box:1.8.1 point at the
+# commit: pushing tag v1.8.1 makes ghcr.io/<owner>/agent-box:v1.8.1 point at the
 # existing sha-<commit> manifest. It never rebuilds. A second build of the same
-# commit would resolve the newest Claude Code CLI again, so 1.8.1 could ship a
+# commit would resolve the newest Claude Code CLI again, so v1.8.1 could ship a
 # different CLI than the image main published — retagging keeps them one digest.
+# Nor does it copy the `latest` tag, which races main's build of the tagged commit
+# (that is how v1.8.1 first got v1.8.0's image). A published version is never
+# overwritten.
 #
 # Tag after pushing main: this waits (up to WAIT_MINUTES) for main's build of the
 # commit to appear. A tagged commit that main never built — e.g. one that didn't
@@ -38,20 +41,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve source image and version
+      - name: Resolve source and target images
         run: |
-          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::'$TAG' is not a vX.Y.Z tag."
             exit 1
           fi
-          version="${BASH_REMATCH[1]}"
           commit="$(git rev-parse HEAD)"
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/agent-box"
           # metadata-action's `type=sha` tag in publish-agent-box.yml: sha- + 7 hex digits.
           {
             echo "SOURCE=$image:sha-${commit:0:7}"
-            echo "TARGET=$image:$version"
+            echo "TARGET=$image:$TAG"
           } >> "$GITHUB_ENV"
+
+      - name: Refuse to overwrite a published version
+        run: |
+          if docker buildx imagetools inspect "$TARGET" > /dev/null 2>&1; then
+            echo "::error::$TARGET already exists; versions are immutable. Tag a new version instead."
+            exit 1
+          fi
 
       - name: Wait for main's build of this commit
         run: |

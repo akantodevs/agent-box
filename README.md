@@ -253,7 +253,7 @@ volumes:
 Notes:
 
 - `latest` is resolved at pull time — update with `docker compose pull agent`. To pin,
-  use a release version (`1.8.1`, from the repo's `v1.8.1` tag) or the `sha-<commit>`
+  use a release version (`v1.8.0`, named like the repo's git tags) or the `sha-<commit>`
   tag published per build; a version is the same image as its commit's `sha-` tag.
 - The image is published for `linux/amd64` and `linux/arm64`; Docker pulls the variant
   matching the host, so Apple Silicon (M1 and later) Macs run it natively without
@@ -476,7 +476,7 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 | `agent-box/skills/`                       | Skills baked into the image and synced to `~/.claude/skills/` on every start, so every deployment has them offline. Project-specific skills belong in the workspace at `/workspace/.claude/skills/` instead, where Claude Code reads them in place.                                                                                                                                                                                                                                                                                 |
 | `agent-box/scripts/sync_claude_home.sh`   | Mirrors the baked `~/.claude` content (manual, skills) into the `claude-data` volume on every start. Needed because a named volume is pre-populated from the image only while empty — afterwards the volume wins, so a `COPY` alone would never reach an existing box. Image wins for what it ships; anything else in the volume is untouched; content dropped from a later image is removed.                                                                                                                                       |
 | `.github/workflows/publish-agent-box.yml` | Builds the image on pushes to `main` touching `agent-box/**` and pushes `latest` + `sha-<commit>` tags to ghcr.io. Resolves the newest published Claude Code version and passes it as `CLAUDE_CODE_VERSION`, so the build cache cannot keep republishing a stale CLI.                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `.github/workflows/release-agent-box.yml` | On a `vX.Y.Z` tag push, tags the image main already published for that commit (`sha-<commit>`) as `X.Y.Z` — a retag, never a rebuild, so a version is byte-for-byte the image main shipped (a rebuild could bake a newer Claude Code CLI). Waits up to 45 minutes for main's build, so tag right after pushing. |
+| `.github/workflows/release-agent-box.yml` | On a `vX.Y.Z` tag push, tags the image main already published for that commit (`sha-<commit>`) as `vX.Y.Z` — a retag, never a rebuild, so a version is byte-for-byte the image main shipped (a rebuild could bake a newer Claude Code CLI). Never overwrites a published version. Waits up to 45 minutes for main's build, so tag right after pushing. |
 
 ### Startup lifecycle
 
@@ -601,7 +601,7 @@ This is a development convenience, not a sandbox. Treat it accordingly:
 - **Add a plugin:** add a line to `agent-box/plugins.txt`, then rebuild (or rerun
   `install_plugins.sh` inside the container as the `claude` user).
 - **Update the image in a consuming project:** `docker compose pull agent`, then
-  `docker compose up -d agent`. Pin a release version (`1.8.1`) or a `sha-<commit>` tag instead of `latest`
+  `docker compose up -d agent`. Pin a release version (`v1.8.0`) or a `sha-<commit>` tag instead of `latest`
   for reproducibility. **Coming from an image published before the port change**, also
   update the service's `ports:` and `environment:` to the block shown in
   [Option A](#option-a--prebuilt-image-from-ghcrio-recommended): the servers now listen
