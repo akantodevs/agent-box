@@ -64,6 +64,11 @@ right here:
   k8s, k3s, …); a kubeconfig is *not* baked into the image, so point it at a
   cluster per deployment (mount/copy a kubeconfig or set `KUBECONFIG`). Run it
   directly, not inside another container.
+- **`sops`** (+ **`age`**) — encrypted secrets committed to git repos. Keys are
+  *not* baked into the image; the deployment supplies them (`SOPS_AGE_KEY_FILE`,
+  `SOPS_AGE_KEY`, or cloud KMS credentials). Edit secrets with `sops set` /
+  `sops --decrypt` / `sops --encrypt --in-place`, not `sops <file>` (that opens an
+  editor). Never write decrypted output under `/workspace` or into the transcript.
 - **`docker` / `docker compose`** — drive *this* Compose stack over the mounted
   socket (that's the one legitimate use of Docker — operating the stack, not
   wrapping local tools).

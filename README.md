@@ -338,6 +338,7 @@ All knobs are environment variables on the `agent` service in `docker-compose.ym
 | `ALLOW_TERRAFORM_MODIFY`      | `Ask`<sup>\*</sup> | Whether the agent may run infrastructure-mutating Terraform (`apply`, `destroy`, `import`, `state rm`/`mv`, `taint`, ...). `No` blocks, `Ask` prompts once per terraform directory then remembers it, `Yes` runs freely. Read-only commands always run. <sup>\*</sup>Shipped as `Ask` in `docker-compose.yml`; if unset/unrecognized the guard fails **closed** (blocks).                               |
 | `REMOTE_CONTROL_NAME`         | unset              | When set, Claude Code launches with `--remote-control <name>-<suffix>`, enabling Remote Control and naming the session. Set the **base** name; each session appends its own suffix (its slugified title, or the head of its id) so concurrent sessions stay distinguishable. Leave unset to keep Remote Control off (the default).                                                                      |
 | `GH_TOKEN`                    | unset              | GitHub token for `git` and `gh` (see [GitHub access](#github-access)). `gh` reads it directly; git uses it through `gh auth git-credential`, so it is never written to disk. Supply it through a gitignored `.credentials` file loaded with `env_file:` — never in the compose file itself. Unset leaves GitHub unauthenticated (public reads still work). |
+| `SOPS_AGE_KEY` / `SOPS_AGE_KEY_FILE` | unset          | The age private key `sops` decrypts with (see [sops secrets](#sops-secrets)), either the key itself or the path to a mounted key file. Supply it through `.credentials`, like `GH_TOKEN`. Unset, `sops` can still encrypt to a public key but cannot decrypt. |
 | `GIT_USER_NAME` / `GIT_USER_EMAIL` | unset              | Commit identity, written to the `claude` user's `~/.gitconfig` at startup. Unset, git refuses to commit. |
 | `ALLOW_GIT_WRITE`             | `No`<sup>\*</sup>  | Whether the agent may run git/gh write operations (`commit`, `push`, `pull`, `merge`, `rebase`, `reset`, `checkout`/`switch`, creating branches or tags, `gh pr create`, ...). `No` blocks them and the agent leaves changes in the working tree; `Yes` allows them, and the agent works on a branch and opens a PR. Reads (`status`, `diff`, `log`, `fetch`, `clone`, `gh pr view`, ...) always run. <sup>\*</sup>Shipped as `No`; if unset/unrecognized the guard fails **closed** (blocks). |
 
@@ -395,6 +396,30 @@ scope is the real boundary. `~/.gitconfig` is rebuilt from these variables on ev
 start, so a `git config --global` change made inside the box lasts only until the
 next restart.
 
+### sops secrets
+
+`sops` and `age` are installed for encrypted secrets kept in git. To let the box
+decrypt them, give it its **own** age key, so it can be revoked without touching
+anyone else's:
+
+1. On the host, outside the repo: `age-keygen -o ~/agent-box-sops.txt`. It prints the
+   public key (`age1...`); the file holds the private key (`AGE-SECRET-KEY-1...`).
+2. Add the private key to `.credentials`:
+
+   ```bash
+   echo "SOPS_AGE_KEY=$(grep '^AGE-SECRET-KEY-' ~/agent-box-sops.txt)" >> .credentials
+   ```
+
+   Or mount the key file read-only and set `SOPS_AGE_KEY_FILE` to its path in the
+   container instead.
+3. Recreate the container (`docker compose up -d`).
+4. In the repo holding the secrets, add the **public** key to the recipients in
+   `.sops.yaml` and run `sops updatekeys <file>` for each existing secret file.
+
+Revoke the box by removing its public key from `.sops.yaml` and running
+`sops updatekeys` again; secrets it could already read should then be rotated. As with
+`GH_TOKEN`, the agent can read the key — that is what lets it decrypt.
+
 A default **status line** (model, git branch, context usage, plan usage, session cost)
 ships in the image. To customize it, edit the `statusLine` entry in the volume's
 `~/.claude/settings.json` (or run `/statusline` inside Claude Code) — the entrypoint
@@ -409,7 +434,7 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 | Piece                                     | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `docker-compose.yml`                      | Defines the `agent` service: build, the `agent-box:latest` image, the two published ports (session list `8090`, agent tabs `8091` — each written once as a variable and used both to publish and to tell the container), env vars, and the volume mounts. The `name:` field pins the Compose project name.                                                                                                                                                                                                                          |
-| `agent-box/Dockerfile`                    | Builds the image: Debian + Node.js + Claude Code CLI + docker CLI + Terraform + kubectl + ttyd + Playwright MCP with headless Chromium, plus everyday CLI tools (`ps`/`pkill`, `jq`, `less`, `nc`, `dig`, `unzip`, `wget`, `tree`, Python with pip/venv, ...), and creates the non-root `claude` user. Ships a healthcheck that probes **both** servers (8091 and `/healthz` on 8090). The in-session Claude Code auto-updater is disabled — the image owns the version, taken from the `CLAUDE_CODE_VERSION` build arg (CI resolves the newest published release on every build).                                                                       |
+| `agent-box/Dockerfile`                    | Builds the image: Debian + Node.js + Claude Code CLI + docker CLI + Terraform + kubectl + sops/age + ttyd + Playwright MCP with headless Chromium, plus everyday CLI tools (`ps`/`pkill`, `jq`, `less`, `nc`, `dig`, `unzip`, `wget`, `tree`, Python with pip/venv, ...), and creates the non-root `claude` user. Ships a healthcheck that probes **both** servers (8091 and `/healthz` on 8090). The in-session Claude Code auto-updater is disabled — the image owns the version, taken from the `CLAUDE_CODE_VERSION` build arg (CI resolves the newest published release on every build).                                                                       |
 | `agent-box/ep.sh`                         | Entrypoint (runs as **root**): fixes ownership, seeds first-run config, grants `claude` access to the Docker socket, optionally updates the CLI (`STARTUP_AUTO_UPDATE`), installs plugins, resolves the box's name (`agent_name.sh`), then launches ttyd and — in a restart loop, so a crash there never costs you the terminal — the session administration server.                                                                                                                                                                                                                    |
 | `agent-box/scripts/launch_session.sh`     | ttyd's entry point for every browser tab. Validates the session id the browser passed as `?arg=` — session-id format, a transcript that exists, and no live process holding it — before handing off to `start_claude.sh` under `su - claude`. Fails closed: only a clean "not live" answer permits a resume, so a second tab on a running session is refused rather than allowed to corrupt the transcript.                                                                                                                         |
 | `agent-box/scripts/start_claude.sh`       | Runs the Claude Code process for one tab: `claude --model "$CLAUDE_MODEL" --resume <id>`, or `--session-id <fresh uuid>` for a new session. Appends `--remote-control <name>-<suffix>` when `REMOTE_CONTROL_NAME` is set. Also starts the tab-title watcher alongside it.                                                                                                                                                                                                                                                           |

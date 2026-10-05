@@ -87,10 +87,11 @@ services:
       # DISABLE_PLAYWRIGHT: "true"
 
     # Secrets, one KEY=value per line, kept out of this file and out of git
-    # (.credentials is gitignored). Currently just GH_TOKEN, a fine-grained
-    # personal access token — see "GitHub access" in README.md for how to create
-    # one and which permissions it needs. Optional: without the file the box
-    # starts with GitHub unauthenticated.
+    # (.credentials is gitignored): GH_TOKEN, a fine-grained personal access
+    # token — see "GitHub access" in README.md for how to create one and which
+    # permissions it needs — and SOPS_AGE_KEY, the age key sops decrypts with
+    # ("sops secrets" in README.md). Optional: without the file the box starts
+    # with GitHub unauthenticated and sops unable to decrypt.
     env_file:
       - path: .credentials
         required: false
