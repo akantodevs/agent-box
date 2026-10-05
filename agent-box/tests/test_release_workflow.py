@@ -29,14 +29,15 @@ class ReleaseWorkflowTest(unittest.TestCase):
     def test_triggers_on_version_tags(self):
         self.assertRegex(self.workflow, r"(?ms)^on:\n  push:\n    tags: \[\"v\*\.\*\.\*\"\]")
 
-    def test_can_be_run_for_an_existing_tag(self):
-        # A manual run uses the workflow from the branch it is started on, so the
-        # tag is an input — tags older than this file could not be run "on" themselves.
-        self.assertRegex(self.workflow, r"(?ms)^  workflow_dispatch:\n    inputs:\n      tag:\n")
-        self.assertIn("TAG: ${{ inputs.tag || github.ref_name }}", self.workflow)
+    def test_tag_push_is_the_only_trigger(self):
+        # Releasing is pushing a tag; nothing has to start the workflow by hand.
+        self.assertNotIn("workflow_dispatch", self.workflow)
+        self.assertNotIn("inputs.", self.workflow)
 
-    def test_resolves_the_tag_not_the_checked_out_branch(self):
-        self.assertRegex(self.workflow, r'git rev-parse "refs/tags/\$TAG\^\{commit\}"')
+    def test_source_is_the_tagged_commit(self):
+        # The tag push checks out the tag, so HEAD is the tagged commit — an
+        # annotated tag's own object id never reaches the image name.
+        self.assertIn('commit="$(git rev-parse HEAD)"', self.workflow)
 
     def test_retags_instead_of_building(self):
         self.assertIn("docker buildx imagetools create", self.workflow)

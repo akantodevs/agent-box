@@ -9,18 +9,9 @@ name: Release agent-box image
 # Tag after pushing main: this waits (up to WAIT_MINUTES) for main's build of the
 # commit to appear. A tagged commit that main never built — e.g. one that didn't
 # touch agent-box/** — fails with an explanation instead of hanging.
-#
-# To (re)publish an existing tag: gh workflow run release-agent-box.yml -f tag=v1.8.1
-# (an input, not --ref: a manual run uses the workflow file of the branch it starts
-# on, and tags older than this file don't have it).
 on:
   push:
     tags: ["v*.*.*"]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing vX.Y.Z tag to publish
-        required: true
 
 jobs:
   retag:
@@ -29,11 +20,11 @@ jobs:
       contents: read
       packages: write
     env:
-      TAG: ${{ inputs.tag || github.ref_name }}
+      TAG: ${{ github.ref_name }}
       WAIT_MINUTES: 45
 
     steps:
-      # Only for git, to resolve the tag to its commit below.
+      # Checks out the tag, so HEAD is the tagged commit.
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -54,13 +45,7 @@ jobs:
             exit 1
           fi
           version="${BASH_REMATCH[1]}"
-          # Fetch the tag itself: on a manual run the checkout is the branch, not the tag.
-          if ! git fetch --quiet --depth=1 origin "+refs/tags/$TAG:refs/tags/$TAG"; then
-            echo "::error::Tag $TAG does not exist."
-            exit 1
-          fi
-          # ^{commit}: an annotated tag is its own object; the image is keyed on the commit.
-          commit="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          commit="$(git rev-parse HEAD)"
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/agent-box"
           # metadata-action's `type=sha` tag in publish-agent-box.yml: sha- + 7 hex digits.
           {
