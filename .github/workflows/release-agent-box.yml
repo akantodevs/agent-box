@@ -1,0 +1,87 @@
+name: Release agent-box image
+
+# Gives a version tag the image that publish-agent-box.yml already built for its
+# commit: pushing tag v1.8.1 makes ghcr.io/<owner>/agent-box:1.8.1 point at the
+# existing sha-<commit> manifest. It never rebuilds. A second build of the same
+# commit would resolve the newest Claude Code CLI again, so 1.8.1 could ship a
+# different CLI than the image main published — retagging keeps them one digest.
+#
+# Tag after pushing main: this waits (up to WAIT_MINUTES) for main's build of the
+# commit to appear. A tagged commit that main never built — e.g. one that didn't
+# touch agent-box/** — fails with an explanation instead of hanging.
+#
+# To (re)publish an existing tag: gh workflow run release-agent-box.yml -f tag=v1.8.1
+# (an input, not --ref: a manual run uses the workflow file of the branch it starts
+# on, and tags older than this file don't have it).
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag to publish
+        required: true
+
+jobs:
+  retag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      WAIT_MINUTES: 45
+
+    steps:
+      # Only for git, to resolve the tag to its commit below.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve source image and version
+        run: |
+          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::'$TAG' is not a vX.Y.Z tag."
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          # Fetch the tag itself: on a manual run the checkout is the branch, not the tag.
+          if ! git fetch --quiet --depth=1 origin "+refs/tags/$TAG:refs/tags/$TAG"; then
+            echo "::error::Tag $TAG does not exist."
+            exit 1
+          fi
+          # ^{commit}: an annotated tag is its own object; the image is keyed on the commit.
+          commit="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/agent-box"
+          # metadata-action's `type=sha` tag in publish-agent-box.yml: sha- + 7 hex digits.
+          {
+            echo "SOURCE=$image:sha-${commit:0:7}"
+            echo "TARGET=$image:$version"
+          } >> "$GITHUB_ENV"
+
+      - name: Wait for main's build of this commit
+        run: |
+          deadline=$((SECONDS + WAIT_MINUTES * 60))
+          until docker buildx imagetools inspect "$SOURCE" > /dev/null 2>&1; do
+            if (( SECONDS >= deadline )); then
+              echo "::error::$SOURCE did not appear within $WAIT_MINUTES minutes. Main publishes an image" \
+                "only for commits touching agent-box/** — check publish-agent-box.yml ran for this commit."
+              exit 1
+            fi
+            echo "Waiting for $SOURCE ..."
+            sleep 30
+          done
+
+      - name: Tag it
+        run: |
+          docker buildx imagetools create --tag "$TARGET" "$SOURCE"
+          docker buildx imagetools inspect "$TARGET"
