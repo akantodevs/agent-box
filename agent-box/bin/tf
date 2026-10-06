@@ -8,6 +8,11 @@
 # environment comes from the working directory, not -chdir: cd into the root you mean to run.
 # An environment dir with secrets.enc.env but no .sops-infra.yaml is an error, not a fallback.
 #
+# Before terraform runs, tf sources infrastructure/config.env and then infrastructure/<dir>/config.env
+# (<dir> being the first directory below infrastructure you are in), each only if it exists. They are
+# plain shell, sourced with every assignment exported; the <dir> file overrides the shared one, and an
+# environment's sops secrets override both. A config.env that fails (non-zero status) stops tf.
+#
 # agent-box's terraform-guard treats `tf` like `terraform`, so ALLOW_TERRAFORM_MODIFY governs
 # `tf apply`, `tf destroy`, … exactly as it does the unwrapped commands.
 set -euo pipefail
@@ -20,10 +25,23 @@ cwd="$(pwd -P)"
 # The environment is the first path component below infra_dir, if it has a sops config (see secrets).
 # Encrypted secrets without that config is a broken environment, not a shared dir: refuse rather than
 # run terraform without its credentials (or with whatever ambient ones the shell happens to hold).
+# Non-secret settings (TF_VAR_*, backend config, …) shared by the tree, then by this directory.
+load_config() {
+    [[ -f "$1" ]] || return 0
+    set -a +u
+    # shellcheck source=/dev/null
+    source "$1" || { echo "tf: $1 failed (status $?); not running terraform" >&2; exit 1; }
+    set +a -u
+}
+
 env=""
+if [[ "$cwd" == "$infra_dir" || "$cwd" == "$infra_dir"/* ]]; then
+    load_config "$infra_dir/config.env"
+fi
 if [[ "$cwd" == "$infra_dir"/* ]]; then
     env="${cwd#"$infra_dir"/}"
     env="${env%%/*}"
+    load_config "$infra_dir/$env/config.env"
     if [[ ! -f "$infra_dir/$env/.sops-infra.yaml" ]]; then
         if [[ -e "$infra_dir/$env/secrets.enc.env" ]]; then
             echo "tf: $infra_dir/$env has secrets.enc.env but no sops config $infra_dir/$env/.sops-infra.yaml;" \

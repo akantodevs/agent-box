@@ -440,6 +440,14 @@ cd /workspace/infrastructure/stage/3-app && tf plan   # terraform with stage's s
 directory with `secrets.enc.env` but no `.sops-infra.yaml` is treated as a broken
 environment: `tf` refuses to run there instead of falling back to terraform without
 its secrets.
+
+Non-secret settings (`TF_VAR_*`, backend or provider config, …) can live in plain
+`config.env` files: before running terraform, `tf` sources
+`/workspace/infrastructure/config.env` and then `/workspace/infrastructure/<env>/config.env`,
+each only if it exists, exporting every variable they set. The environment's file
+overrides the shared one, and its sops secrets override both. A `config.env` that ends
+with a non-zero status stops `tf` before terraform runs.
+
 `terraform-guard.js` treats `tf` as `terraform`, so `tf apply` is gated by
 `ALLOW_TERRAFORM_MODIFY` exactly like `terraform apply`.
 

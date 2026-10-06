@@ -24,6 +24,7 @@ if [ "$3" = exec-env ]; then SECRET_FROM_SOPS=1; export SECRET_FROM_SOPS; exec /
 """
 FAKE_TERRAFORM = """#!/bin/sh
 { echo "cwd=$(pwd -P)"; echo "secret=${SECRET_FROM_SOPS:-}"; printf 'arg=%s\\n' "$@"; } > "$FAKE_TF_LOG"
+env | grep '^CFG_' | sort > "$FAKE_TF_LOG.cfg"
 """
 
 
@@ -123,6 +124,55 @@ class InfraBinTest(unittest.TestCase):
                 self.assertIn(f"{qa}/.sops-infra.yaml", result.stderr)
                 self.assertFalse(os.path.exists(self.tf_log))
                 self.assertFalse(os.path.exists(self.sops_log))
+
+    def write(self, path, body):
+        with open(path, "w") as fh:
+            fh.write(body)
+
+    def test_tf_sources_shared_then_environment_config(self):
+        # config.env files are plain shell: assignments are exported without `export`,
+        # the environment's file overrides the shared one, and sops secrets still load.
+        self.write(os.path.join(self.infra, "config.env"),
+                   "CFG_SHARED=infra\nCFG_OVERRIDE=infra\n")
+        self.write(os.path.join(self.infra, "stage", "config.env"),
+                   "CFG_OVERRIDE=stage\nCFG_DERIVED=\"$CFG_SHARED-stage\"\n")
+        app = os.path.join(self.infra, "stage", "app")
+        result = self.run_bin("tf", "plan", cwd=app)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log(self.tf_log), [f"cwd={app}", "secret=1", "arg=plan"])
+        self.assertEqual(self.log(self.tf_log + ".cfg"), [
+            "CFG_DERIVED=infra-stage", "CFG_OVERRIDE=stage", "CFG_SHARED=infra"])
+
+    def test_tf_config_is_optional_per_level(self):
+        self.write(os.path.join(self.infra, "production", "config.env"), "CFG_ONLY=prod\n")
+        result = self.run_bin("tf", "plan", cwd=os.path.join(self.infra, "production", "app"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log(self.tf_log + ".cfg"), ["CFG_ONLY=prod"])
+
+    def test_tf_sources_config_in_shared_dirs_without_secrets(self):
+        self.write(os.path.join(self.infra, "config.env"), "CFG_SHARED=infra\n")
+        self.write(os.path.join(self.infra, "modules", "config.env"), "CFG_MODULES=1\n")
+        for cwd, expected in ((self.infra, ["CFG_SHARED=infra"]),
+                              (os.path.join(self.infra, "modules", "net"),
+                               ["CFG_MODULES=1", "CFG_SHARED=infra"])):
+            with self.subTest(cwd=cwd):
+                result = self.run_bin("tf", "validate", cwd=cwd)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(os.path.exists(self.sops_log))
+                self.assertEqual(self.log(self.tf_log + ".cfg"), expected)
+
+    def test_tf_ignores_config_outside_infrastructure(self):
+        self.write(os.path.join(self.infra, "config.env"), "CFG_SHARED=infra\n")
+        result = self.run_bin("tf", "validate", cwd=self.tmp)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log(self.tf_log + ".cfg"), [])
+
+    def test_tf_stops_on_a_failing_config(self):
+        self.write(os.path.join(self.infra, "stage", "config.env"), "CFG_X=1\n[ -n \"$CFG_MISSING\" ]\n")
+        result = self.run_bin("tf", "plan", cwd=os.path.join(self.infra, "stage", "app"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{self.infra}/stage/config.env", result.stderr)
+        self.assertFalse(os.path.exists(self.tf_log))
 
     def test_tf_leaves_mutating_commands_to_the_guard(self):
         # terraform-guard.js recognises `tf`, so the wrapper must not second-guess

@@ -72,7 +72,9 @@ right here:
 - **`secrets`** / **`tf`** — infrastructure secrets for Terraform roots under
   `/workspace/infrastructure/<env>/` (each env has `.sops-infra.yaml` +
   `secrets.enc.env`). `secrets <env> exec -- <cmd>` runs a command with that env's
-  secrets loaded; `tf` is `terraform` with them loaded. Don't use
+  secrets loaded; `tf` is `terraform` with them loaded, after sourcing the
+  plain-text `infrastructure/config.env` and `infrastructure/<env>/config.env`
+  (non-secret settings; each optional, the env's wins). Don't use
   `secrets <env> edit` — it opens an editor. **`tf` or `terraform`:**
   - Inside `/workspace/infrastructure/<env>/…`, always `tf`. Bare `terraform` there
     runs without the env's credentials — or with whatever ambient ones the shell
