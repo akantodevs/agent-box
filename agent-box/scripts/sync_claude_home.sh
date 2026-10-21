@@ -1,8 +1,10 @@
 #!/bin/sh
 # sync_claude_home.sh — mirror image-owned Claude Code content into the state volume.
 #
-# Run this AS ROOT from ep.sh, before the chown of /home/claude, so synced files end
-# up owned by the claude user.
+# Run this AS ROOT from ep.sh, with CLAUDE_STATE_OWNER=claude:claude: everything it
+# writes is then handed to that owner, and nothing else in the volume is touched.
+# (ep.sh used to chown the whole volume afterwards instead — issue #7: on a box a
+# few months old that is a 100k-file walk on every boot.) Unset, nothing is chowned.
 #
 # Why this exists at all: ~/.claude is the claude-data volume. Docker pre-populates a
 # named volume from the image only while that volume is EMPTY; afterwards the volume
@@ -22,6 +24,12 @@ set -eu
 SRC="${AGENT_BOX_CLAUDE_HOME_SRC:-/opt/agent-box/claude-home}"
 DEST="${CLAUDE_STATE_DIR:-/home/claude/.claude}"
 MANIFEST="$DEST/.agent-box-synced"
+OWNER="${CLAUDE_STATE_OWNER:-}"
+
+# chown "$@" to OWNER, if one was given.
+own() {
+    [ -z "$OWNER" ] || chown "$@"
+}
 
 if [ ! -d "$SRC" ]; then
     echo "[sync-claude-home] no baked tree at $SRC — nothing to do"
@@ -59,6 +67,7 @@ sync_entry() {
     mkdir -p "$(dirname "$_dst")"
     rm -rf "$_dst"
     cp -R "$_src" "$_dst"
+    own -R "$OWNER" "$_dst"
     synced="$synced$_rel
 "
 }
@@ -72,6 +81,7 @@ sync_entry CLAUDE.md
 
 if [ -d "$SRC/skills" ]; then
     mkdir -p "$DEST/skills"
+    own "$OWNER" "$DEST/skills"
     for _path in "$SRC"/skills/*; do
         [ -e "$_path" ] || continue     # unmatched glob when skills/ is empty
         sync_entry "skills/$(basename "$_path")"
@@ -96,5 +106,6 @@ $_old
 fi
 
 printf '%s' "$synced" > "$MANIFEST"
+own "$OWNER" "$MANIFEST"
 
 echo "[sync-claude-home] synced image content into $DEST"

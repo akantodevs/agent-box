@@ -207,6 +207,24 @@ class SessionSelectionTest(StartTestCase):
         self.assertEqual(SESSION_A, self.value_after(argv, "--resume"))
         self.assertNotIn(SESSION_B, argv)
 
+    def test_new_with_an_id_starts_a_new_session_under_that_id(self):
+        """The admin page mints the id so the tab's URL names its session from
+        the first moment; launch_session.sh hands it over as `--new <id>`."""
+        argv = self.launch("--new", SESSION_A)
+        self.assertNotIn("--resume", argv)
+        self.assertNotIn("--new", argv)
+        self.assertEqual(SESSION_A, self.value_after(argv, "--session-id"))
+
+    def test_new_without_an_id_generates_one(self):
+        argv = self.launch("--new", "")
+        self.assertNotIn("--resume", argv)
+        self.assertTrue(session_store.is_uuid(self.value_after(argv, "--session-id")))
+
+    def test_new_names_the_tab_as_a_new_session(self):
+        result = self.run_script("--new", SESSION_A)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(b"Agent: new session", result.stdout)
+
 
 class ModelTest(StartTestCase):
     def test_model_comes_from_claude_model(self):
@@ -437,6 +455,11 @@ class EnvironmentTest(StartTestCase):
 
     def test_playwright_browsers_path_is_exported(self):
         self.assertEqual("/ms-playwright", self._exported("PLAYWRIGHT_BROWSERS_PATH"))
+
+    def test_the_playwright_mcp_uses_the_baked_chromium(self):
+        """@playwright/mcp defaults to the Chrome channel, which the image does
+        not ship: without this every browser tool fails at launch."""
+        self.assertEqual("chromium", self._exported("PLAYWRIGHT_MCP_BROWSER"))
 
     def test_the_box_name_is_exported(self):
         """The tab-title watcher reads it from the environment, and it arrives

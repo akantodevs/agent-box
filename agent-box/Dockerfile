@@ -102,7 +102,9 @@ RUN useradd -m -s /bin/bash claude
 # plugins.txt). Browsers go to a fixed shared path: the default is per-user
 # (~/.cache/ms-playwright), but this install runs as root while the MCP runs
 # as `claude`. Chromium is installed through the MCP's own bundled playwright
-# so the browser revision matches exactly what the server expects.
+# so the browser revision matches exactly what the server expects. The MCP
+# itself defaults to the Chrome channel, which is not installed, so
+# start_claude.sh points it at this Chromium (PLAYWRIGHT_MCP_BROWSER).
 # The chown lets the agent self-install a newer revision at runtime if a
 # newer @playwright/mcp (fetched by the plugin's `npx @playwright/mcp@latest`)
 # ever demands one.

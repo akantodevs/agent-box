@@ -14,14 +14,29 @@ CLAUDE_HOME=/home/claude
 CLAUDE_STATE_DIR="$CLAUDE_HOME/.claude"
 mkdir -p "$CLAUDE_STATE_DIR"
 
+# Ownership is fixed for exactly what this script writes as root, never by
+# walking a tree (issue #7). A recursive chown of the home directory dates from
+# when ~/.claude was a Windows bind mount that mangled ownership; it is a Docker
+# volume now, nothing but `claude` writes into it, and an agent a few months old
+# has 100k files there — a walk of minutes on every boot. The directories
+# themselves are handed over because a fresh named volume mounts root-owned.
+chown claude:claude "$CLAUDE_HOME" "$CLAUDE_STATE_DIR"
+
 # Always refresh the content the image owns (operating manual, baked skills) from
 # the baked tree so image rebuilds are reflected in the volume without having to
-# recreate it. Runs before the chown below, so synced files land owned by claude.
-CLAUDE_STATE_DIR="$CLAUDE_STATE_DIR" /opt/agent-box/scripts/sync_claude_home.sh
-chown -R claude:claude "$CLAUDE_HOME"
+# recreate it. CLAUDE_STATE_OWNER makes the sync hand each file it writes to
+# claude, and nothing else.
+CLAUDE_STATE_DIR="$CLAUDE_STATE_DIR" CLAUDE_STATE_OWNER=claude:claude /opt/agent-box/scripts/sync_claude_home.sh
 
+# /workspace is a bind mount, and sibling containers that run as root leave
+# root-owned files in it, so it is still repaired — but only the files that need
+# it. `chown -R` rewrote every inode on every boot: slow on a large tree, and a
+# change event for every file watcher in every sibling service. -h hands over a
+# symlink itself and never follows it out of the workspace, as chown -R did.
 mkdir -p /workspace
-chown -R claude:claude /workspace
+find /workspace \( ! -user claude -o ! -group claude \) \
+    -exec chown -h claude:claude {} + \
+    || echo "WARN: could not hand every file in /workspace to claude"
 
 # Grant the claude user access to the mounted Docker socket.
 #
@@ -69,12 +84,14 @@ if [ ! -f "$CLAUDE_HOME/.claude.json" ]; then
 cat > "$CLAUDE_HOME/.claude.json" <<'CLAUDEJSON'
 {"hasCompletedOnboarding":true,"projects":{"/workspace":{"hasTrustDialogAccepted":true}}}
 CLAUDEJSON
+chown claude:claude "$CLAUDE_HOME/.claude.json"
 fi
 
 if [ ! -f "$CLAUDE_HOME/.claude/settings.json" ]; then
 cat > "$CLAUDE_HOME/.claude/settings.json" <<'SETTINGS'
 {"agentPushNotifEnabled":true,"skipDangerousModePermissionPrompt":true}
 SETTINGS
+chown claude:claude "$CLAUDE_HOME/.claude/settings.json"
 fi
 
 # Default status line: point settings.json at the baked-in script, but only if

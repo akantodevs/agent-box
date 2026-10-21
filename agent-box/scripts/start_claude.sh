@@ -18,6 +18,7 @@ CONTAINER_LOG="${AGENT_BOX_LOG:-/var/log/container.log}"
 # exported here, not just set in the Dockerfile.
 export DISABLE_AUTOUPDATER=1                  # image owns the CLI version
 export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright # where the baked Chromium lives
+export PLAYWRIGHT_MCP_BROWSER=chromium        # ...and use it: the MCP defaults to Chrome, not shipped
 export GH_PROMPT_DISABLED=1                   # no keyboard to answer gh's prompts
 export GH_NO_UPDATE_NOTIFIER=1                # image owns the gh version too
 
@@ -67,11 +68,23 @@ MODEL="${CLAUDE_MODEL:-opus}"
 # the Remote Control name — from the moment it starts, rather than only once
 # Claude has written its first transcript line.
 #
+# `--new <id>` is a new session under an id the admin page minted: its "+ New
+# session" link carries the id in the tab's URL, so a reload reconnects to the
+# session instead of starting another. launch_session.sh sends that form only
+# for an id that has no transcript yet.
+#
 # An empty $1 must take the new-session branch and not become `--resume ''`:
 # that is claude's interactive session picker, which is not something a tab can
 # answer.
 SESSION_ID="${1:-}"
-if [ -n "$SESSION_ID" ]; then
+NEW_SESSION=""
+if [ "$SESSION_ID" = "--new" ]; then
+    NEW_SESSION=1
+    SESSION_ID="${2:-}"
+fi
+if [ -n "$SESSION_ID" ] && [ -n "$NEW_SESSION" ]; then
+    SESSION_ARGS=(--session-id "$SESSION_ID")
+elif [ -n "$SESSION_ID" ]; then
     SESSION_ARGS=(--resume "$SESSION_ID")
 elif SESSION_ID=$(python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null) \
     && [ -n "$SESSION_ID" ]; then

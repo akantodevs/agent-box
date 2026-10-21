@@ -3,7 +3,7 @@
 #
 # Run this AS THE `claude` USER (plugins install into that user's ~/.claude).
 # It is idempotent: already-installed plugins and already-known marketplaces
-# are skipped, so it is safe to run on every container start.
+# are skipped, so it is safe to run on every container start. Needs jq.
 #
 # plugins.txt format (one entry per line):
 #   <plugin>@<marketplace>                  # marketplace source resolved below
@@ -36,9 +36,39 @@ case "$(printf '%s' "${DISABLE_PLAYWRIGHT:-}" | tr '[:upper:]' '[:lower:]')" in
     *)          disable_playwright=0 ;;
 esac
 
-# Snapshot current state once; refresh after each mutating command.
-installed="$(claude plugin list 2>/dev/null || true)"
-known="$(claude plugin marketplace list 2>/dev/null || true)"
+# Every `claude` call is a full CLI start, close to a second each, and this runs
+# on every boot before the terminal comes up. So the plugin state is read once,
+# as JSON — installed AND enabled, one "<id> <true|false>" line per plugin — and
+# the CLI is only called again for something that actually needs changing: a
+# box whose plugins are all in place costs exactly one call. The marketplace
+# list is only needed to install, so it is read lazily, at most once.
+#
+# Output that cannot be parsed reads as "nothing installed", which takes the
+# install path; that is idempotent, so a CLI that changed its JSON costs time,
+# never a plugin.
+read_state() {
+    state="$(claude plugin list --json 2>/dev/null \
+        | jq -r '.[] | "\(.id) \(.enabled)"' 2>/dev/null || true)"
+}
+
+# "true", "false", or empty when $1 is not installed. Matched as a whole field,
+# so one plugin id can never match as a prefix of another.
+status_of() {
+    printf '%s\n' "$state" | awk -v id="$1" '$1 == id { print $2; exit }'
+}
+
+known=""
+known_read=0
+market_known() {
+    if [ "$known_read" = 0 ]; then
+        known="$(claude plugin marketplace list --json 2>/dev/null \
+            | jq -r '.[].name' 2>/dev/null || true)"
+        known_read=1
+    fi
+    printf '%s\n' "$known" | grep -qxF "$1"
+}
+
+read_state
 
 while IFS= read -r line || [ -n "$line" ]; do
     # Strip inline comments, CRs, and surrounding whitespace.
@@ -53,13 +83,17 @@ while IFS= read -r line || [ -n "$line" ]; do
     market="${spec#*@}"
     [ "$market" = "$spec" ] && market=""   # no '@' present
 
+    status="$(status_of "$spec")"
+
     # 0. Honor DISABLE_PLAYWRIGHT: keep the plugin disabled if present, and
     # don't install it on fresh volumes.
     if [ "$disable_playwright" = 1 ] && [ "$plugin" = "playwright" ]; then
-        if printf '%s' "$installed" | grep -qF "$spec"; then
+        if [ "$status" = true ]; then
             disable_out="$(claude plugin disable "$spec" 2>&1)" \
                 || printf '%s' "$disable_out" | grep -q "already disabled" \
                 || echo "[plugins] WARN: failed to disable $spec: $disable_out"
+            echo "[plugins] $spec disabled (DISABLE_PLAYWRIGHT is set)"
+        elif [ "$status" = false ]; then
             echo "[plugins] $spec disabled (DISABLE_PLAYWRIGHT is set)"
         else
             echo "[plugins] skipping $spec (DISABLE_PLAYWRIGHT is set)"
@@ -67,31 +101,32 @@ while IFS= read -r line || [ -n "$line" ]; do
         continue
     fi
 
-    # 1. Ensure the marketplace is known.
-    if [ -n "$market" ] && ! printf '%s' "$known" | grep -qF "$market"; then
-        src="$source_override"
-        [ -z "$src" ] && src="$(default_source "$market")"
-        if [ -n "$src" ]; then
-            echo "[plugins] adding marketplace '$market' ($src)"
-            if claude plugin marketplace add "$src"; then
-                known="$(claude plugin marketplace list 2>/dev/null || true)"
-            else
-                echo "[plugins] WARN: failed to add marketplace '$market' — skipping $spec"
-                continue
-            fi
-        else
-            echo "[plugins] WARN: marketplace '$market' unknown and no source given — skipping $spec"
-            continue
-        fi
-    fi
-
-    # 2. Install the plugin if not already present.
-    if printf '%s' "$installed" | grep -qF "$spec"; then
+    if [ -n "$status" ]; then
         echo "[plugins] $spec already installed"
     else
+        # 1. Ensure the marketplace is known.
+        if [ -n "$market" ] && ! market_known "$market"; then
+            src="$source_override"
+            [ -z "$src" ] && src="$(default_source "$market")"
+            if [ -n "$src" ]; then
+                echo "[plugins] adding marketplace '$market' ($src)"
+                if claude plugin marketplace add "$src"; then
+                    known_read=0
+                else
+                    echo "[plugins] WARN: failed to add marketplace '$market' — skipping $spec"
+                    continue
+                fi
+            else
+                echo "[plugins] WARN: marketplace '$market' unknown and no source given — skipping $spec"
+                continue
+            fi
+        fi
+
+        # 2. Install the plugin.
         echo "[plugins] installing $spec"
         if claude plugin install "$spec"; then
-            installed="$(claude plugin list 2>/dev/null || true)"
+            read_state
+            status="$(status_of "$spec")"
         else
             echo "[plugins] WARN: failed to install $spec"
             continue
@@ -103,9 +138,11 @@ while IFS= read -r line || [ -n "$line" ]; do
     # settings reseed) while the plugin payload survives in the volume — leaving it
     # installed but disabled. `claude plugin enable` exits non-zero when the plugin
     # is already enabled, so treat that as success.
-    enable_out="$(claude plugin enable "$spec" 2>&1)" \
-        || printf '%s' "$enable_out" | grep -q "already enabled" \
-        || { echo "[plugins] WARN: failed to enable $spec: $enable_out"; continue; }
+    if [ "$status" != true ]; then
+        enable_out="$(claude plugin enable "$spec" 2>&1)" \
+            || printf '%s' "$enable_out" | grep -q "already enabled" \
+            || { echo "[plugins] WARN: failed to enable $spec: $enable_out"; continue; }
+    fi
     echo "[plugins] $spec enabled"
 done < "$PLUGINS_FILE"
 

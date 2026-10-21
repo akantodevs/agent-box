@@ -176,12 +176,19 @@ session a tab gets, the terminal runs it.
   one — what it is currently doing. Clicking a row opens that session in a new browser
   tab; **+ New session** opens a fresh one. The page polls every five seconds, so a
   session you start in one tab shows up in the list on its own.
+- **A tab's URL always names its session.** **+ New session** picks the new session's
+  id itself and opens `?arg=<id>`, so reloading the tab reconnects to the same session
+  — even before its first prompt — instead of starting another. Any well-formed id
+  with no transcript behind it starts a new session under that id, so a stale or
+  mistyped link opens an empty session rather than an error.
 - **Opening the terminal port directly starts a _new_ session.** The terminal URL with
   no `?arg=` on it no longer resumes the most recent conversation — it begins an empty
   one. This is the biggest behavioural change from earlier versions of agent-box, which
   resumed a single, always-the-same conversation on every connect. To get back to an
   existing conversation, open it from the admin page (or keep its `?arg=<session-id>`
-  URL: the tab's address is stable and bookmarkable).
+  URL: the tab's address is stable and bookmarkable). A tab opened this way has no id
+  in its URL, so reloading it starts yet another session — start sessions from the
+  admin page.
 - **A session can only be open in one tab.** Two Claude processes writing one transcript
   corrupt it, so the launcher refuses the second tab and says so. Running sessions are
   shown but not clickable; close the tab that holds one to get it back. (A browser
@@ -517,8 +524,11 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 
 1. The container starts `ep.sh` as **root** (PID 1).
 2. It syncs the image-owned `~/.claude` content — the operating manual and any baked
-   skills — into the `claude-data` volume via `sync_claude_home.sh`. It `chown`s
-   `/home/claude` and `/workspace`, seeds onboarding-skip config (only files that
+   skills — into the `claude-data` volume via `sync_claude_home.sh`, handing what it
+   writes to `claude`. Ownership is fixed only for what the entrypoint writes, never by
+   walking the volume (a months-old box holds 100k+ files there); in `/workspace` only
+   files not already owned by `claude` — e.g. left by a sibling container running as
+   root — are `chown`ed. It seeds onboarding-skip config (only files that
    don't already exist — `settings.json` lives in the volume and accumulates runtime
    state like plugin enablement, so it is never overwritten), and **grants the `claude`
    user access to the mounted Docker socket** by adding it to a group that matches the
@@ -530,7 +540,8 @@ only sets the default when no `statusLine` is configured, so your changes stick.
    root, which the root-owned npm prefix needs, and before ttyd exists, so no session is
    holding the install being replaced. A failure here is a warning, never a failed boot.
 4. It installs and enables plugins from `plugins.txt` as the `claude` user (idempotent),
-   using whichever CLI version step 3 left in place.
+   using whichever CLI version step 3 left in place. The state is read in one CLI call
+   and the CLI is only called again for a plugin that needs installing or enabling.
 5. It launches **ttyd** on port `8091` with `-a` (so a tab can name its session as
    `?arg=<session-id>`) and no client limit. Every connection runs
    `launch_session.sh` (through its `agent-session` alias), which validates that id and

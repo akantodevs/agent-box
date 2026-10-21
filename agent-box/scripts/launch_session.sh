@@ -13,9 +13,12 @@ set -e
 #   * and it decides whether a second Claude process opens a transcript that
 #     already has one, which corrupts the conversation irrecoverably.
 #
-# So it is checked against the session-id format, against an existing
-# transcript, and against the live-session registry — in that order — before
-# any of that happens. Only $1 is ever read; extra ?arg= values are inert.
+# So it is checked against the session-id format and against the live-session
+# registry before any of that happens, and a transcript is looked up to decide
+# between resuming it and starting a new session under that id — the admin
+# page mints the id of a new session itself, so the tab's URL names its session
+# from the first moment and a reload reconnects to it. Only $1 is ever read;
+# extra ?arg= values are inert.
 #
 # An empty $1 and no $1 at all both mean "start a new session": ttyd turns a
 # bare `?arg=` into one empty argument, and that is a request for a new
@@ -177,13 +180,14 @@ hangup() {
 }
 
 launch() {
-    # $1 here is this function's argument — the validated session id, or
-    # nothing at all for a new session — not the script's.
+    # The arguments here are this function's — the validated session id, the
+    # same id after `--new` for a session that has no transcript yet, or
+    # nothing at all for a new session the container names — not the script's.
     #
-    # It is the one thing interpolated unquoted, on purpose: the gate above
-    # proves it is 36 characters of [0-9a-f-], and quoting it would turn "no
-    # session" into an empty first argument to start_claude.sh, which is a
-    # different thing to hand it than no argument.
+    # They are the one thing interpolated unquoted, on purpose: the gate above
+    # proves the id is 36 characters of [0-9a-f-], `--new` is a literal, and
+    # quoting would turn "no session" into an empty first argument to
+    # start_claude.sh, which is a different thing to hand it than no argument.
     #
     # `su -` is a login shell and strips the environment, so anything Claude
     # needs has to travel in this string.
@@ -219,7 +223,7 @@ AGENT_NAME=$(quote "${AGENT_NAME:-}") \
 ALLOW_GIT_WRITE=$(quote "${ALLOW_GIT_WRITE:-}") \
 GIT_USER_NAME=$(quote "${GIT_USER_NAME:-}") \
 GIT_USER_EMAIL=$(quote "${GIT_USER_EMAIL:-}") \
-$SCRIPTS/start_claude.sh $1" <&3 3<&- &
+$SCRIPTS/start_claude.sh $*" <&3 3<&- &
     SESSION_PID=$!
 
     # Every trap above exits, and a trapped signal interrupts wait, so this
@@ -265,9 +269,13 @@ esac
 # Past the gate the id is safe to use as a filename pattern: no glob character
 # survives it. `|| true` keeps set -e out of it — find exits non-zero when
 # projects/ does not exist yet, which is simply "no transcript".
+#
+# No transcript means a new session under this id, not an error: that is what
+# the admin page's "+ New session" link opens, and what a reload of that tab
+# opens again until the first prompt writes a transcript. A stale or mistyped
+# id therefore starts a fresh session under that id.
 TRANSCRIPT=$(find "$CLAUDE_HOME/projects" -mindepth 2 -maxdepth 2 \
     -name "$SESSION_ID.jsonl" -print -quit 2>/dev/null || true)
-[ -n "$TRANSCRIPT" ] || fail "Refusing to resume: no transcript for $SAFE_ID."
 
 # Two Claude processes on one transcript corrupt it, so a second client is
 # refused. A browser refresh lands here too — ttyd SIGHUPs the old child and
@@ -283,4 +291,10 @@ while is_live "$SESSION_ID"; do
     WAITED=$((WAITED + 250))
 done
 
-launch "$SESSION_ID"
+# A new session needs the liveness check above just as much as a resume does:
+# Claude registers itself at startup, before it writes a transcript, so a
+# duplicated tab of a brand-new session is refused there like any other.
+if [ -n "$TRANSCRIPT" ]; then
+    launch "$SESSION_ID"
+fi
+launch --new "$SESSION_ID"

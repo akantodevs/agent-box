@@ -1168,6 +1168,37 @@ class NodeRenderTest(unittest.TestCase):
         self.assertNotIn("<img", markup)
         self.assertIn("&lt;script&gt;", markup)
 
+    # The launcher's id gate: lowercase only, as Claude Code writes them.
+    NEW_LINK = re.compile(
+        r"^http://box\.example:8091/\?arg="
+        r"([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
+    )
+
+    def new_link_ids(self, events=()):
+        """The id on "+ New session" at load, then after each dispatched event."""
+        probe = "const link = __nodes.new;\nconsole.log(link.href);\n"
+        for event in events:
+            probe += "link.listeners.%s({});\nconsole.log(link.href);\n" % event
+        hrefs = run_in_node(probe).split()
+        ids = []
+        for href in hrefs:
+            match = self.NEW_LINK.match(href)
+            self.assertIsNotNone(match, href)
+            ids.append(match.group(1))
+        return ids
+
+    def test_new_session_names_its_id_in_the_url(self):
+        # Issue #9: the tab's URL has to name its session from the first
+        # moment, or a reload starts another one.
+        self.assertEqual(1, len(self.new_link_ids()))
+
+    def test_every_way_of_opening_new_session_mints_a_fresh_id(self):
+        # Each handler runs before the browser reads the href, so a click, a
+        # middle-click and "open in new tab" from the context menu each open
+        # their own session rather than two tabs sharing one id.
+        ids = self.new_link_ids(["click", "auxclick", "contextmenu"])
+        self.assertEqual(4, len(set(ids)), ids)
+
     def test_an_idle_session_links_to_its_own_terminal(self):
         markup = self.render([self.session()])
         self.assertIn(

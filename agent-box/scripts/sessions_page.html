@@ -237,7 +237,27 @@
     refresh();
   });
 
-  document.getElementById("new").href = terminalUrl(null);
+  // A new session's id is minted here rather than in the container, so the
+  // tab's URL names its session from the first moment and a reload reconnects
+  // to it instead of starting another (issue #9); the launcher starts a new
+  // session under any well-formed id that has no transcript. getRandomValues
+  // and not randomUUID: the latter exists only in secure contexts, and this
+  // page is commonly served over plain http to a LAN address. Lowercase hex,
+  // because that is all the launcher's id gate accepts.
+  const newSessionId = () => {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  };
+
+  // Re-minted on every way of opening the link — each handler runs before the
+  // browser reads the href — so two tabs opened from it never share an id.
+  const newLink = document.getElementById("new");
+  const remintNewLink = () => { newLink.href = terminalUrl(newSessionId()); };
+  for (const type of ["click", "auxclick", "contextmenu"]) newLink.addEventListener(type, remintNewLink);
+  remintNewLink();
   tick();
 </script>
 </body>

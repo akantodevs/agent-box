@@ -561,18 +561,25 @@ class MalformedIdTest(LaunchTestCase):
 
 
 class UnknownSessionTest(LaunchTestCase):
-    def test_a_well_formed_id_with_no_transcript_is_refused(self):
+    """A well-formed id with no transcript is a new session under that id: the
+    admin page mints it so the tab's URL names its session from the start."""
+
+    def assert_new_session_under(self, result, session_id):
+        record = self.eval_command(self.launched_command(result))
+        self.assertEqual("2", record["argc"])
+        self.assertEqual(["--new", session_id], record["arg"])
+
+    def test_a_well_formed_id_with_no_transcript_starts_a_new_session(self):
         write_transcript(self.home, SESSION_A, [])
-        stderr = self.assert_not_launched(self.run_script(SESSION_B))
-        self.assertIn("no transcript", stderr)
-        self.assertIn(SESSION_B, stderr)
+        self.assert_new_session_under(self.run_script(SESSION_B), SESSION_B)
 
     def test_a_missing_projects_directory_is_not_an_error(self):
         # Nothing has ever run in this home: projects/ does not exist. find must
-        # not print to the terminal, and the script must refuse cleanly.
+        # not print to the terminal, and the session must start cleanly.
         self.assertFalse(os.path.exists(os.path.join(self.home, "projects")))
-        stderr = self.assert_not_launched(self.run_script(SESSION_A))
-        self.assertIn("no transcript", stderr)
+        result = self.run_script(SESSION_A)
+        self.assert_new_session_under(result, SESSION_A)
+        stderr = result.stderr.decode("utf-8", "replace")
         self.assertNotIn("No such file", stderr)
         self.assertNotIn("find:", stderr)
 
@@ -581,7 +588,22 @@ class UnknownSessionTest(LaunchTestCase):
         nested = os.path.join(self.home, "projects", "-workspace", "sub")
         os.makedirs(nested)
         open(os.path.join(nested, SESSION_A + ".jsonl"), "w").close()
-        self.assert_not_launched(self.run_script(SESSION_A))
+        self.assert_new_session_under(self.run_script(SESSION_A), SESSION_A)
+
+    def test_a_live_session_with_no_transcript_yet_is_refused(self):
+        # Claude registers itself at startup, before it writes any transcript,
+        # so a duplicated tab of a brand-new session is caught like any other.
+        pid = live_pid(self)
+        write_registry(
+            self.home,
+            "%d.json" % pid,
+            sessionId=SESSION_A,
+            pid=pid,
+            updatedAt=FRESH,
+            status="idle",
+        )
+        stderr = self.assert_not_launched(self.run_script(SESSION_A))
+        self.assertIn("already open", stderr)
 
 
 class LiveSessionTest(LaunchTestCase):

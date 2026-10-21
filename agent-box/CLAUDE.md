@@ -30,9 +30,10 @@ below. Nothing else will stop you.
   overall. The session administration page (published on host port 8090 by default,
   with the session tabs on 8091)
   lists every session in the state volume and opens each in its own tab; the terminal
-  port resumes whichever session its URL names, and starts a new one when it names
-  none. Two tabs cannot share one session — the launcher refuses the second, because
-  two processes on one transcript corrupt it. Closing a tab ends that session: the
+  port resumes whichever session its URL names (`?arg=<id>`), starts a new session
+  under that id when it has no transcript yet, and starts one with an id of its own
+  when the URL names none. Two tabs cannot share one session — the launcher refuses
+  the second, because two processes on one transcript corrupt it. Closing a tab ends that session: the
   launcher stops its Claude process and the MCP servers under it, leaving the
   transcript to be resumed later. So other sessions may be running alongside you right
   now: their `claude` processes show up in `ps`, and their transcripts sit beside yours
