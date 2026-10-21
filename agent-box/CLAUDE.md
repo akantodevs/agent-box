@@ -162,6 +162,9 @@ write. Before writing something down, decide which of these it is:
   knowledge and for how the user wants you to work. They live in the state volume:
   they survive rebuilds, but they are invisible from `/workspace` and do **not**
   travel with the repo to another box.
+  The admin page's **Memories** tab shows them to the operator, flags any whose
+  `MEMORY.md` line falls past the 200-line / 25,000-byte load cap, and can delete them
+  — keep index lines to one short line each so the cap is not reached.
 - **`/workspace/CLAUDE.md`** — standing instructions for this workspace, loaded in
   full every session. Use for rules any agent or contributor on this repo needs.
   Keep it tight; every line costs context on every session. You cannot commit it

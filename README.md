@@ -76,6 +76,9 @@ For the full story (building locally, configuration, how it works), read on.
 - **Many sessions, one box** — a [session administration page](#sessions) on container
   port **8090** lists every conversation in the volume and opens each one in its own
   browser tab, so several jobs can run side by side.
+- **Memory housekeeping** — a [Memories](#memories) tab beside the session list shows
+  every auto-memory file, how much of `MEMORY.md`'s load cap is used, and which
+  memories have fallen past it, and lets you read or delete them.
 - **Persistent sessions** — credentials, settings, and conversation transcripts live in
   the `claude-data` named volume, so they survive container restarts and rebuilds; pick
   a session from the admin page and it resumes exactly where it left off.
@@ -194,8 +197,8 @@ session a tab gets, the terminal runs it.
 - **Browser tabs carry those names.** A session tab is called
   `Agent: <session name> · <AGENT_NAME>` and follows the session as it renames itself —
   a fresh one reads `Agent: new session` until Claude Code titles it, then changes in
-  place. The admin page's own tab is `Sessions: <AGENT_NAME>`, so two boxes open at
-  once stay apart. (Each tab's full title ends in ttyd's own `agent-session
+  place. The admin page's own tabs are `Sessions: <AGENT_NAME>` and `Memories: <AGENT_NAME>`,
+  so two boxes open at once stay apart. (Each tab's full title ends in ttyd's own `agent-session
 (<hostname>)`; the part a tab shows you is the session name.)
 - **Delete is permanent.** Deleting a session from the page removes its transcript from
   the volume — the conversation cannot be recovered, and there is no undo. A running
@@ -206,6 +209,27 @@ session a tab gets, the terminal runs it.
 - **The entries count is transcript entries**, tool results included — it runs at
   roughly twice a human's idea of how many turns were taken. That is why it is not
   labelled "messages".
+
+## Memories
+
+Claude Code keeps what it learns about a box in auto-memory files under
+`~/.claude/projects/<project>/memory/`, one fact per file, plus `MEMORY.md`, the index
+that points at them. **Only the index is loaded into each session, and Claude Code cuts
+it off after 200 lines or 25,000 bytes** — a memory whose index line falls past that is
+never seen again. The **Memories** tab on the admin page (`/memories`) is for keeping
+that in check:
+
+- **The summary line** shows the number of memories, their total size, and the index's
+  size and line count against both caps. It turns amber past 80% of either.
+- **Memories are grouped by type** — user, feedback, project, reference (anything else
+  is _other_) — and each carries a status: **loaded**, **cut off** (indexed only past the
+  cap) or **orphaned** (no index line at all). Index lines that point at a file which no
+  longer exists are listed below as **dangling**.
+- **Click a memory's name to read it** — the whole file, frontmatter included.
+- **Delete removes the file and its `MEMORY.md` line together**; the rest of the index
+  is left byte-for-byte as it was. There is no undo. Running sessions are unaffected
+  until they next start: they loaded the index when they began. A `MEMORY.md` line that
+  links to several memories goes with any of them; the others may then show as orphaned.
 
 ## Using it for a real project
 
@@ -469,11 +493,14 @@ only sets the default when no `statusLine` is configured, so your changes stick.
 | `agent-box/ep.sh`                         | Entrypoint (runs as **root**): fixes ownership, seeds first-run config, grants `claude` access to the Docker socket, optionally updates the CLI (`STARTUP_AUTO_UPDATE`), installs plugins, resolves the box's name (`agent_name.sh`), then launches ttyd and — in a restart loop, so a crash there never costs you the terminal — the session administration server.                                                                                                                                                                                                                    |
 | `agent-box/scripts/launch_session.sh`     | ttyd's entry point for every browser tab. Validates the session id the browser passed as `?arg=` — session-id format, a transcript that exists, and no live process holding it — before handing off to `start_claude.sh` under `su - claude`. Fails closed: only a clean "not live" answer permits a resume, so a second tab on a running session is refused rather than allowed to corrupt the transcript.                                                                                                                         |
 | `agent-box/scripts/start_claude.sh`       | Runs the Claude Code process for one tab: `claude --model "$CLAUDE_MODEL" --resume <id>`, or `--session-id <fresh uuid>` for a new session. Appends `--remote-control <name>-<suffix>` when `REMOTE_CONTROL_NAME` is set. Also starts the tab-title watcher alongside it.                                                                                                                                                                                                                                                           |
-| `agent-box/scripts/sessions.py`           | The session administration server on container port `8090` (stdlib only, runs as `claude`): the page itself at `/`, `GET /api/sessions`, `POST /api/sessions/<uuid>/delete`, and an unauthenticated `/healthz` for the healthcheck. Everything else is behind the same basic-auth credentials as ttyd.                                                                                                                                                                                                                              |
+| `agent-box/scripts/sessions.py`           | The session administration server on container port `8090` (stdlib only, runs as `claude`): the page itself at `/`, the Memories page at `/memories` and its stylesheet at `/static/common.css`, `GET /api/sessions`, `POST /api/sessions/<uuid>/delete`, `GET /api/memories`, `GET /api/memories/<project>/<file>`, `POST /api/memories/<project>/<file>/delete`, and an unauthenticated `/healthz` for the healthcheck. Everything else is behind the same basic-auth credentials as ttyd.                                        |
 | `agent-box/scripts/session_store.py`      | Read-only discovery of sessions from Claude Code's own state files — transcripts under `~/.claude/projects/`, live processes from `~/.claude/sessions/`. Stores no state of its own. Also the `--is-live` / `--slug` helper the two shell scripts call. Its only mutating function is the transcript delete.                                                                                                                                                                                                                        |
 | `agent-box/scripts/agent_name.sh`         | Resolves what this box is called, once at boot: `AGENT_NAME` if the operator set one, else the container's name from `docker inspect` over the mounted socket, else the hostname. Never fails — an unnamed box costs a tab title, not a boot.                                                                                                                                                                                                                                                                                       |
 | `agent-box/scripts/session_title.py`      | Names the browser tab. Started per session by `start_claude.sh`, it writes `Agent: <session name>` to the terminal as an OSC title and rewrites it whenever the session renames itself, then ends with the Claude process it was started from.                                                                                                                                                                                                                                                                                      |
 | `agent-box/scripts/sessions_page.html`    | The admin page's UI. `sessions.py` bakes `AGENT_TABS_PUBLIC_PORT` into it at startup so the rows can link to the agent tabs, and `AGENT_NAME` as the page's browser-tab title.                                                                                                                                                                                                                                                                                                                                                      |
+| `agent-box/scripts/memories_page.html`    | The Memories page's UI: memories grouped by type, status against the `MEMORY.md` cap, view and delete.                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `agent-box/scripts/memory_store.py`       | Reads the auto-memory dirs under `~/.claude/projects/*/memory/`, parses frontmatter and the `MEMORY.md` index, and classifies each memory against Claude Code's 200-line / 25,000-byte index cap. Its only mutating function deletes one memory and rewrites the index without its lines.                                                                                                                                                                                                                                           |
+| `agent-box/scripts/common.css`            | Styling and nav bar shared by both admin pages, served at `/static/common.css`.                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `agent-box/scripts/update_claude_code.sh` | Optional boot-time CLI upgrade, gated by `STARTUP_AUTO_UPDATE` (only `Yes` enables it; fail-closed like the other flags). Runs as root before ttyd starts, so no session is holding the install it replaces. Never fails the boot — an unreachable registry leaves the box on the version its image shipped. |
 | `agent-box/scripts/install_plugins.sh`    | Idempotently installs **and enables** the plugins from `plugins.txt`.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `agent-box/scripts/statusline.js`         | Default Claude Code status line (model, git branch, context usage, plan usage, session cost). Wired into `settings.json` by `ep.sh` unless a `statusLine` is already configured.                                                                                                                                                                                                                                                                                                                                                    |
@@ -562,8 +589,8 @@ This is a development convenience, not a sandbox. Treat it accordingly:
   `admin` in `docker-compose.yml`. Change them before using this anywhere but localhost.
 - **Two ports, both sensitive.** The same credentials guard the terminal and the session
   administration page; expose neither publicly. The terminal is a root-capable shell by
-  proxy, and the admin page can **permanently delete conversations** — anyone who
-  reaches it can destroy transcripts that have no backup.
+  proxy, and the admin page can **permanently delete conversations and memories** —
+  anyone who reaches it can destroy transcripts and memory files that have no backup.
 - **`GH_TOKEN` is visible to the agent.** It sits in the session environment, so
   anything the agent runs can use it. Scope it to the repositories and permissions the
   box needs, give it an expiration, and revoke it on GitHub if the box is compromised.

@@ -43,6 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
 sys.path.insert(0, HERE)
 
+import memory_store
 import sessions
 import session_store
 from test_session_store import (
@@ -58,6 +59,8 @@ from test_session_store import (
 USER = "operator"
 PASSWORD = "s3cret-pw"
 PAGE = "<!doctype html><title>sessions</title>"
+MEMORIES_PAGE = "<!doctype html><title>memories</title>"
+STYLESHEET = "body { color: red; }"
 
 Response = collections.namedtuple("Response", "status headers body")
 
@@ -76,8 +79,9 @@ class ServerTestCase(unittest.TestCase):
         self.store = session_store.SessionStore(self.home)
         self.serve(self.store, (USER, PASSWORD))
 
-    def serve(self, store, credential, page=PAGE):
-        """Start a server whose handler is configured with these three values.
+    def serve(self, store, credential, page=PAGE, memories_page=MEMORIES_PAGE,
+              stylesheet=STYLESHEET):
+        """Start a server whose handler is configured with these values.
 
         The handler is a throwaway subclass rather than sessions.Handler itself:
         the configuration lives on the class, so patching the module's own class
@@ -86,7 +90,8 @@ class ServerTestCase(unittest.TestCase):
         handler = type(
             "ConfiguredHandler",
             (sessions.Handler,),
-            {"store": store, "page": page, "credential": credential},
+            {"store": store, "page": page, "credential": credential,
+             "memories_page": memories_page, "stylesheet": stylesheet},
         )
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         # serve_forever() polls for the shutdown flag, so the default interval
@@ -383,6 +388,144 @@ class ApiTest(ServerTestCase):
         strict_loads(response.body)
 
 
+class MemoryPagesTest(ServerTestCase):
+    def test_the_memories_page_is_served(self):
+        response = self.fetch("/memories")
+        self.assertEqual(200, response.status)
+        self.assertEqual("text/html; charset=utf-8", response.headers["Content-Type"])
+        self.assertEqual(MEMORIES_PAGE.encode("utf-8"), response.body)
+
+    def test_the_stylesheet_is_served_as_css(self):
+        response = self.fetch("/static/common.css")
+        self.assertEqual(200, response.status)
+        self.assertEqual("text/css; charset=utf-8", response.headers["Content-Type"])
+        self.assertEqual(STYLESHEET.encode("utf-8"), response.body)
+
+    def test_both_are_behind_the_credentials(self):
+        for path in ("/memories", "/static/common.css", "/api/memories"):
+            with self.subTest(path=path):
+                self.assertEqual(401, self.fetch(path, auth=False).status)
+
+
+class MemoryApiTest(ServerTestCase):
+    def memory_dir(self, project="-workspace"):
+        path = os.path.join(self.home, "projects", project, "memory")
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def write(self, filename, content, project="-workspace"):
+        path = os.path.join(self.memory_dir(project), filename)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        return path
+
+    def test_an_empty_home_lists_no_memories(self):
+        body = strict_loads(self.fetch("/api/memories").body)
+        self.assertEqual([], body["memories"])
+        self.assertEqual(0, body["totals"]["count"])
+        self.assertIsInstance(body["generatedAt"], int)
+
+    def test_the_listing_is_the_store_listing(self):
+        self.write("a.md", "---\nname: alpha\nmetadata:\n  type: user\n---\nfact\n")
+        self.write("MEMORY.md", "- [A](a.md)\n")
+        response = self.fetch("/api/memories")
+        self.assertEqual("application/json", response.headers["Content-Type"])
+        body = strict_loads(response.body)
+        expected = memory_store.list_memories(self.home)
+        self.assertEqual(expected["memories"], body["memories"])
+        self.assertEqual(expected["totals"], body["totals"])
+
+    def test_one_memory_is_served_as_text(self):
+        self.write("a.md", "---\nname: a\n---\n<b>hi</b>\n")
+        response = self.fetch("/api/memories/-workspace/a.md")
+        self.assertEqual(200, response.status)
+        self.assertEqual("text/plain; charset=utf-8", response.headers["Content-Type"])
+        self.assertEqual(b"---\nname: a\n---\n<b>hi</b>\n", response.body)
+
+    def test_percent_encoded_components_are_decoded(self):
+        self.write("a.md", "x", project="-my project")
+        self.assertEqual(b"x", self.fetch("/api/memories/-my%20project/a.md").body)
+
+    def test_an_encoded_slash_cannot_climb_out(self):
+        self.write("a.md", "x")
+        for path in ("/api/memories/..%2F..%2Fsessions/a.md",
+                     "/api/memories/-workspace/..%2Fa.md",
+                     "/api/memories/-workspace/MEMORY.md"):
+            with self.subTest(path=path):
+                response = self.fetch(path)
+                self.assertEqual(400, response.status)
+                self.assertEqual(b"not a memory id\n", response.body)
+
+    def test_an_unknown_memory_is_404(self):
+        self.memory_dir()
+        response = self.fetch("/api/memories/-workspace/nope.md")
+        self.assertEqual((404, b"no such memory\n"), (response.status, response.body))
+
+    def test_delete_removes_the_file_and_its_index_line(self):
+        path = self.write("a.md", "x")
+        self.write("MEMORY.md", "- [A](a.md)\n- [B](b.md)\n")
+        response = self.fetch("/api/memories/-workspace/a.md/delete", method="POST")
+        self.assertEqual(204, response.status)
+        self.assertEqual(b"", response.body)
+        self.assertNotIn("Content-Length", response.headers)
+        self.assertFalse(os.path.exists(path))
+        with open(os.path.join(self.memory_dir(), "MEMORY.md"), "rb") as handle:
+            self.assertEqual(b"- [B](b.md)\n", handle.read())
+
+    def test_delete_requires_credentials_and_does_not_delete(self):
+        path = self.write("a.md", "x")
+        response = self.fetch("/api/memories/-workspace/a.md/delete", method="POST", auth=False)
+        self.assertEqual(401, response.status)
+        self.assertTrue(os.path.exists(path))
+
+    def test_delete_refusals_are_forwarded(self):
+        self.memory_dir()
+        self.assertEqual(400, self.fetch("/api/memories/-workspace/MEMORY.md/delete",
+                                         method="POST").status)
+        self.assertEqual(404, self.fetch("/api/memories/-workspace/nope.md/delete",
+                                         method="POST").status)
+
+    def test_a_get_on_the_delete_route_does_not_delete(self):
+        path = self.write("a.md", "x")
+        self.assertEqual(404, self.fetch("/api/memories/-workspace/a.md/delete").status)
+        self.assertTrue(os.path.exists(path))
+
+    def test_a_delete_failure_is_redacted_for_the_browser_and_logged(self):
+        path = self.write("a.md", "x")
+        error = memory_store.MemoryStoreError(500, "could not delete %s: denied" % path)
+        with mock.patch.object(memory_store, "delete_memory", side_effect=error):
+            with self.assertLogs("sessions", level="ERROR") as logged:
+                response = self.fetch("/api/memories/-workspace/a.md/delete", method="POST")
+        self.assertEqual(500, response.status)
+        self.assertEqual(b"could not delete the memory\n", response.body)
+        self.assertNotIn(b"/", response.body)
+        self.assertIn(path, "\n".join(logged.output))
+
+    def test_a_partial_delete_tells_the_browser_the_file_is_gone(self):
+        path = self.write("a.md", "x")
+        error = memory_store.MemoryStoreError(
+            500, "deleted %s but could not update index: denied" % path,
+            public="deleted the memory, but could not update MEMORY.md")
+        with mock.patch.object(memory_store, "delete_memory", side_effect=error):
+            with self.assertLogs("sessions", level="ERROR") as logged:
+                response = self.fetch("/api/memories/-workspace/a.md/delete", method="POST")
+        self.assertEqual(500, response.status)
+        self.assertEqual(b"deleted the memory, but could not update MEMORY.md\n", response.body)
+        self.assertNotIn(b"/", response.body.replace(b"MEMORY.md", b""))
+        self.assertIn(path, "\n".join(logged.output))
+
+    def test_a_read_failure_is_redacted_for_the_browser_and_logged(self):
+        path = self.write("a.md", "x")
+        error = memory_store.MemoryStoreError(500, "could not read %s: denied" % path)
+        with mock.patch.object(memory_store, "read_memory", side_effect=error):
+            with self.assertLogs("sessions", level="ERROR") as logged:
+                response = self.fetch("/api/memories/-workspace/a.md")
+        self.assertEqual(500, response.status)
+        self.assertEqual(b"could not read the memory\n", response.body)
+        self.assertNotIn(b"/", response.body)
+        self.assertIn(path, "\n".join(logged.output))
+
+
 def strict_loads(body):
     """json.loads that refuses NaN/Infinity, the way every browser does."""
 
@@ -648,6 +791,15 @@ class PageTitleTest(unittest.TestCase):
         self.assertNotIn("<script>", title)
         self.assertNotIn("</title>", title)
 
+    def test_the_memories_page_is_titled_by_its_section(self):
+        path = os.path.join(self.directory, "page.html")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("<title>__PAGE_TITLE__</title>")
+        self.assertEqual("<title>Memories: box</title>",
+                         sessions.build_page(path, 8091, "box", section="Memories"))
+        self.assertEqual("<title>Agent Box memories</title>",
+                         sessions.build_page(path, 8091, "", section="Memories"))
+
     def test_the_name_is_one_bounded_line(self):
         self.assertEqual("Sessions: a b", self.title("a\n b"))
         self.assertLessEqual(len(self.title("x" * 500)), 100)
@@ -670,10 +822,14 @@ HARNESS = """
 const nodes = {};
 const element = () => ({
   hidden: false, textContent: "", innerHTML: "", href: "", dataset: {},
-  addEventListener() {},
+  // Listeners are recorded, so a test can dispatch a click the way a browser would.
+  addEventListener(type, fn) { (this.listeners ||= {})[type] = fn; },
+  querySelectorAll() { return []; },
+  focus() {},
 });
 globalThis.document = {
   hidden: false,
+  activeElement: null,
   addEventListener() {},
   getElementById(id) { return (nodes[id] = nodes[id] || element()); },
 };
@@ -1130,6 +1286,329 @@ class NoContentHeaderTest(ServerTestCase):
         self.assertEqual(204, self.fetch("/api/sessions/%s/delete" % SESSION_A,
                                          method="POST").status)
         self.assertEqual([], self.rows())
+
+
+SCRIPTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts")
+
+
+class SharedChromeTest(unittest.TestCase):
+    """Both admin pages load one stylesheet and carry the same nav bar."""
+
+    def read(self, name):
+        with open(os.path.join(SCRIPTS, name), encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_both_pages_link_the_shared_stylesheet(self):
+        for name in ("sessions_page.html", "memories_page.html"):
+            with self.subTest(page=name):
+                self.assertIn('<link rel="stylesheet" href="/static/common.css">', self.read(name))
+
+    def test_each_page_marks_itself_current_in_the_nav(self):
+        for name, current in (("sessions_page.html", "/"), ("memories_page.html", "/memories")):
+            with self.subTest(page=name):
+                page = self.read(name)
+                self.assertIn('<a href="/"', page)
+                self.assertIn('<a href="/memories"', page)
+                self.assertIn('<a href="%s" aria-current="page">' % current, page)
+
+    def test_the_palette_lives_only_in_the_shared_stylesheet(self):
+        self.assertIn("--bg:", self.read("common.css"))
+        for name in ("sessions_page.html", "memories_page.html"):
+            with self.subTest(page=name):
+                self.assertNotIn("--bg:", self.read(name))
+
+
+MEMORIES_TEMPLATE = os.path.join(SCRIPTS, "memories_page.html")
+
+
+def memory_row(**overrides):
+    row = {"id": "-workspace/a.md", "project": "-workspace", "file": "a.md",
+           "name": "a", "description": "about a", "type": "feedback",
+           "bytes": 900, "modified": 1700000000, "status": "loaded", "indexLine": 1}
+    row.update(overrides)
+    return row
+
+
+def memory_totals(**overrides):
+    totals = {"count": 1, "bytes": 900, "indexBytes": 650, "indexLines": 6,
+              "indexByteCap": 25000, "indexLineCap": 200,
+              "loaded": 1, "cutoff": 0, "orphaned": 0, "dangling": 0}
+    totals.update(overrides)
+    return totals
+
+
+class MemoriesPageScriptTest(unittest.TestCase):
+    def run_page(self, payload, probe):
+        page = sessions.build_page(MEMORIES_TEMPLATE, 8091, "box", section="Memories")
+        setup = "lastPayload = %s; clockSkew = 1700000600 - Date.now() / 1000; render();\n" % (
+            json.dumps(payload))
+        return run_in_node(setup + probe, page)
+
+    def payload(self, memories=None, dangling=None, **totals):
+        memories = [memory_row()] if memories is None else memories
+        dangling = dangling or []
+        totals.setdefault("dangling", len(dangling))
+        return {"memories": memories, "dangling": dangling,
+                "totals": memory_totals(count=len(memories), **totals)}
+
+    def groups(self, payload):
+        return self.run_page(payload, "console.log(__nodes.groups.innerHTML);")
+
+    def test_groups_appear_in_type_order_and_empty_ones_are_hidden(self):
+        html = self.groups(self.payload([
+            memory_row(id="p/r.md", name="r", type="reference"),
+            memory_row(id="p/u.md", name="u", type="user"),
+            memory_row(id="p/o.md", name="o", type="other"),
+        ]))
+        positions = [html.index(title) for title in ("User", "Reference", "Other")]
+        self.assertEqual(sorted(positions), positions)
+        self.assertNotIn("Feedback", html)
+        self.assertNotIn("Project", html)
+
+    def test_hostile_names_and_descriptions_are_escaped(self):
+        html = self.groups(self.payload([memory_row(name=HOSTILE, description=HOSTILE)]))
+        self.assertNotIn("<script>", html)
+        self.assertNotIn("<img", html)
+
+    def test_status_badges(self):
+        html = self.groups(self.payload([
+            memory_row(id="p/a.md", status="cutoff"),
+            memory_row(id="p/b.md", status="orphaned"),
+        ]))
+        self.assertIn("cut off", html)
+        self.assertIn("orphaned", html)
+
+    def test_rows_show_size_and_age(self):
+        html = self.groups(self.payload())
+        self.assertIn("900 B", html)
+        self.assertIn("10m ago", html)
+
+    def test_the_summary_line(self):
+        out = self.run_page(self.payload(cutoff=2, dangling=[{"project": "p", "file": "g.md", "line": 3, "text": "x"}]),
+                            "console.log(__nodes.summary.textContent);")
+        self.assertIn("1 memory", out)
+        self.assertIn("index 650 B / 25 KB", out)
+        self.assertIn("6 / 200 lines", out)
+        self.assertIn("2 cut off", out)
+        self.assertIn("1 dangling", out)
+        self.assertNotIn("orphaned", out)
+
+    def test_the_summary_warns_past_80_percent_of_either_cap(self):
+        probe = "console.log(JSON.stringify(__nodes.summary.className || ''));"
+        self.assertNotIn("warn", self.run_page(self.payload(indexBytes=19000), probe))
+        self.assertIn("warn", self.run_page(self.payload(indexBytes=20001), probe))
+        self.assertIn("warn", self.run_page(self.payload(indexLines=161), probe))
+
+    def test_an_expanded_row_shows_its_content_escaped_with_newlines_kept(self):
+        probe = ('expanded.set("-workspace/a.md", "line <one>\\nline two"); render();'
+                 "console.log(__nodes.groups.innerHTML);")
+        html = self.run_page(self.payload(), probe)
+        self.assertIn("<pre", html)
+        self.assertIn("line &lt;one&gt;\nline two", html)
+
+    def test_expanded_rows_that_disappear_are_forgotten(self):
+        probe = ('expanded.set("-workspace/gone.md", "x"); render();'
+                 'console.log(expanded.has("-workspace/gone.md"));')
+        self.assertIn("false", self.run_page(self.payload(), probe))
+
+    def test_dangling_lines_are_listed_escaped(self):
+        payload = self.payload(dangling=[{"project": "-workspace", "file": "g.md",
+                                          "line": 7, "text": HOSTILE}])
+        out = self.run_page(payload, "console.log(__nodes.dangling.innerHTML, __nodes.dangling.hidden);")
+        self.assertIn("line 7", out)
+        self.assertNotIn("<script>", out)
+        self.assertTrue(out.strip().endswith("false"))
+
+    def test_an_empty_listing_shows_the_empty_note(self):
+        out = self.run_page(self.payload([]), "console.log(__nodes.empty.hidden);")
+        self.assertEqual("false", out.strip())
+
+
+    # Handler probes. The harness records listeners; these stand in for the
+    # browser's confirm/alert/fetch and for the elements a click lands on.
+    HANDLER_PRELUDE = """
+const calls = [];
+globalThis.confirm = (text) => { calls.push(["confirm", text]); return CONFIRM; };
+globalThis.alert = (text) => calls.push(["alert", text]);
+const fakeButton = (kind, id) => ({
+  dataset: { id }, disabled: false,
+  closest(selector) { return selector === "button." + kind ? this : null; },
+});
+const click = (button) => __nodes.groups.listeners.click({ target: button });
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+const listing = { memories: [], dangling: [], totals: { count: 0, bytes: 0, indexBytes: 0,
+  indexLines: 0, indexByteCap: 25000, indexLineCap: 200 } };
+const reply = (ok, body) => ({ ok, status: ok ? 200 : 500,
+  text: async () => body, json: async () => listing });
+"""
+
+    def handler_probe(self, body, confirm="true"):
+        return self.HANDLER_PRELUDE.replace("CONFIRM", confirm) + "(async () => {\n" + body + "\n})();\n"
+
+    def spaced(self):
+        return self.payload([memory_row(id="-my project/a.md", project="-my project")])
+
+    ENCODED = "-my%20project%2Fa.md"
+
+    def test_delete_posts_to_the_encoded_url_and_then_refreshes(self):
+        out = self.run_page(self.spaced(), self.handler_probe("""
+globalThis.fetch = async (url, options) => { calls.push(["fetch", url, options && options.method]); return reply(true, ""); };
+await click(fakeButton("del", "%s"));
+console.log(JSON.stringify(calls));""" % self.ENCODED))
+        calls = json.loads(out)
+        self.assertEqual(["fetch", "/api/memories/-my%20project/a.md/delete", "POST"], calls[1])
+        self.assertEqual(["fetch", "/api/memories"], calls[2][:2])
+
+    def test_a_failed_delete_alerts_with_the_response_body_and_still_refreshes(self):
+        out = self.run_page(self.spaced(), self.handler_probe("""
+globalThis.fetch = async (url, options) => {
+  calls.push(["fetch", url, options && options.method]);
+  return options && options.method === "POST"
+    ? reply(false, "deleted the memory, but could not update MEMORY.md\\n") : reply(true, "");
+};
+await click(fakeButton("del", "%s"));
+console.log(JSON.stringify(calls));""" % self.ENCODED))
+        calls = json.loads(out)
+        self.assertIn(["alert", "Delete failed: deleted the memory, but could not update MEMORY.md"], calls)
+        self.assertEqual("/api/memories", calls[-1][1])
+
+    def test_the_delete_button_is_usable_again_after_a_failed_delete(self):
+        # A failed delete leaves the listing unchanged, so the refresh rewrites
+        # nothing and the button the click disabled must be re-enabled by hand.
+        out = self.run_page(self.spaced(), self.handler_probe("""
+globalThis.fetch = async (url, options) =>
+  options && options.method === "POST" ? reply(false, "no such memory") : reply(true, "");
+const button = fakeButton("del", "%s");
+await click(button);
+console.log(button.disabled);""" % self.ENCODED))
+        self.assertEqual("false", out.strip())
+
+    def test_declining_the_confirmation_sends_nothing(self):
+        out = self.run_page(self.spaced(), self.handler_probe("""
+globalThis.fetch = async (url) => { calls.push(["fetch", url]); return reply(true, ""); };
+await click(fakeButton("del", "%s"));
+console.log(JSON.stringify(calls.filter((c) => c[0] === "fetch")));""" % self.ENCODED, confirm="false"))
+        self.assertEqual([], json.loads(out))
+
+    def test_a_second_click_on_delete_while_one_is_in_flight_is_ignored(self):
+        out = self.run_page(self.spaced(), self.handler_probe("""
+let release;
+globalThis.fetch = (url, options) => {
+  calls.push(["fetch", url, options && options.method]);
+  return options && options.method === "POST"
+    ? new Promise((resolve) => { release = () => resolve(reply(true, "")); }) : Promise.resolve(reply(true, ""));
+};
+const button = fakeButton("del", "%s");
+const first = click(button);
+await settle();
+await click(button);
+await click(fakeButton("del", "%s"));
+release();
+await first;
+console.log(JSON.stringify(calls.filter((c) => c[2] === "POST").length));""" % (self.ENCODED, self.ENCODED)))
+        self.assertEqual("1", out.strip())
+
+    def test_clicking_a_name_fetches_the_file_and_shows_it_escaped(self):
+        out = self.run_page(self.spaced(), self.handler_probe("""
+globalThis.fetch = async (url) => { calls.push(["fetch", url]); return reply(true, "line <one>\\nline two"); };
+await click(fakeButton("toggle", "%s"));
+console.log(JSON.stringify({ calls, html: __nodes.groups.innerHTML }));""" % self.ENCODED))
+        result = json.loads(out)
+        self.assertEqual(["fetch", "/api/memories/-my%20project/a.md"], result["calls"][0])
+        self.assertIn("<pre>line &lt;one&gt;\nline two</pre>", result["html"])
+
+    def test_collapsing_before_the_fetch_resolves_leaves_the_row_collapsed(self):
+        out = self.run_page(self.spaced(), self.handler_probe("""
+let release;
+globalThis.fetch = () => new Promise((resolve) => { release = () => resolve(reply(true, "late body")); });
+const first = click(fakeButton("toggle", "%s"));
+await click(fakeButton("toggle", "%s"));
+release();
+await first;
+console.log(JSON.stringify({ html: __nodes.groups.innerHTML, open: expanded.size }));""" % (self.ENCODED, self.ENCODED)))
+        result = json.loads(out)
+        self.assertNotIn("<pre", result["html"])
+        self.assertNotIn("late body", result["html"])
+        self.assertEqual(0, result["open"])
+
+    def test_rewriting_the_list_gives_focus_back_to_the_toggle_that_had_it(self):
+        out = self.run_page(self.payload([memory_row(id="p/a.md"), memory_row(id="p/b.md")]), """
+const fresh = [{ dataset: { id: "p%2Fa.md" }, focused: false, focus() { this.focused = true; } },
+               { dataset: { id: "p%2Fb.md" }, focused: false, focus() { this.focused = true; } }];
+document.activeElement = { closest: (s) => s === "button.toggle" ? { dataset: { id: "p%2Fb.md" } } : null };
+__nodes.groups.querySelectorAll = () => fresh;
+expanded.set("p/a.md", "x");
+render();
+console.log(JSON.stringify(fresh.map((b) => b.focused)));""")
+        self.assertEqual([False, True], json.loads(out))
+
+    def test_a_poll_that_changes_nothing_does_not_touch_focus_or_the_dangling_note(self):
+        payload = self.payload(dangling=[{"project": "p", "file": "g.md", "line": 3, "text": "x"}])
+        out = self.run_page(payload, """
+let writes = 0;
+Object.defineProperty(__nodes.dangling, "innerHTML", { get() { return "x"; }, set() { writes += 1; } });
+render(); render(); render();
+console.log(writes);""")
+        # run_page already rendered once, so an unchanged note is never rewritten.
+        self.assertEqual("0", out.strip())
+
+    def test_the_summary_warning_boundary_is_strictly_above_80_percent(self):
+        probe = "console.log(__nodes.summary.className);"
+        self.assertEqual("summary", self.run_page(self.payload(indexBytes=20000), probe).strip())
+        self.assertEqual("summary warn", self.run_page(self.payload(indexBytes=20001), probe).strip())
+        self.assertEqual("summary", self.run_page(self.payload(indexLines=160), probe).strip())
+        self.assertEqual("summary warn", self.run_page(self.payload(indexLines=161), probe).strip())
+
+    def test_the_project_is_shown_only_when_more_than_one_project_is_present(self):
+        one = self.groups(self.payload([memory_row(id="p/a.md"), memory_row(id="p/b.md")]))
+        self.assertNotIn('class="where"', one)
+        two = self.groups(self.payload([memory_row(id="p/a.md"),
+                                        memory_row(id="q/b.md", project="q")]))
+        self.assertEqual(2, two.count('class="where"'))
+
+    def test_dangling_lines_name_their_project_only_when_there_are_several(self):
+        line = {"project": "-workspace", "file": "g.md", "line": 7, "text": "gone"}
+        single = self.run_page(self.payload(dangling=[line]), "console.log(__nodes.dangling.innerHTML);")
+        self.assertIn("g.md line 7", single)
+        self.assertNotIn("-workspace/g.md", single)
+        other = self.payload([memory_row(id="q/a.md", project="q"), memory_row()], dangling=[line])
+        multi = self.run_page(other, "console.log(__nodes.dangling.innerHTML);")
+        self.assertIn("-workspace/g.md line 7", multi)
+
+    def test_data_attributes_carry_only_the_encoded_id(self):
+        hostile = memory_row(id=HOSTILE + "/" + HOSTILE, project=HOSTILE, file=HOSTILE,
+                             name=HOSTILE, status=HOSTILE)
+        html = self.groups(self.payload([hostile, memory_row(id="q/b.md", project="q")]))
+        ids = re.findall(r'data-id="([^"]*)"', html)
+        self.assertEqual(4, len(ids))
+        for value in ids:
+            self.assertTrue(value.isascii())
+            self.assertNotIn("<", value)
+        self.assertEqual([], re.findall(r'data-(?!id=)\w+', html))
+
+    def test_hostile_project_file_and_status_make_no_handlers_or_stray_tags(self):
+        hostile = memory_row(id=HOSTILE + "/" + HOSTILE, project=HOSTILE, file=HOSTILE,
+                             name=HOSTILE, description=HOSTILE, status=HOSTILE)
+        html = self.groups(self.payload([hostile, memory_row(id="q/b.md", project="q")]))
+        parsed = parse_markup(html)
+        self.assertEqual([], [name for name in parsed.attributes if name.startswith("on")])
+        self.assertLessEqual(set(parsed.tags),
+                             {"section", "h2", "span", "ul", "li", "button", "div"})
+
+    def test_every_interpolation_in_a_memory_row_is_escaped(self):
+        with open(MEMORIES_TEMPLATE, encoding="utf-8") as handle:
+            script = page_script(handle.read())
+        start = script.index("const rowHtml")
+        body = script[start:script.index("\n  };", start)]
+        offenders = [part for part in interpolations(body)
+                     if re.search(r"\bm\.", part) and "escapeHtml(" not in part]
+        self.assertEqual([], offenders)
+        start = script.index("dangling.map(")
+        segment = script[start:script.index(".join", start)]
+        offenders = [part for part in interpolations(segment)
+                     if re.search(r"\bd\.", part) and "escapeHtml(" not in part]
+        self.assertEqual([], offenders)
+
 
 
 class LoggingConfigurationTest(unittest.TestCase):

@@ -4,25 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__PAGE_TITLE__</title>
+<link rel="stylesheet" href="/static/common.css">
 <style>
-  :root { color-scheme: dark; --bg:#11131a; --card:#181b24; --line:#252936;
-          --text:#dfe3ee; --soft:#b3b9cb; --dim:#8a90a3;
-          --live:#4ec9a3; --warn:#e2b341; --danger:#e06c75; }
-  * { box-sizing: border-box; }
-  body { margin:0; padding:2rem 1.25rem; background:var(--bg); color:var(--text);
-         font:14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  main { max-width: 62rem; margin: 0 auto; }
-  header { display:flex; align-items:baseline; gap:1rem; margin-bottom:1.25rem; }
-  h1 { font-size:1.1rem; margin:0; font-weight:600; letter-spacing:.02em; }
-  .count { color:var(--dim); }
   .new { margin-left:auto; font:inherit; text-decoration:none; cursor:pointer;
          border:1px solid var(--live); color:var(--live); border-radius:6px;
          padding:.35rem .7rem; white-space:nowrap; }
   .new:hover { background:rgba(78,201,163,.12); }
-  ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.5rem; }
-  li { position:relative; background:var(--card); border:1px solid var(--line);
-       border-radius:8px; padding:.7rem 1rem;
-       display:grid; grid-template-columns:auto minmax(0,1fr) auto auto auto;
+  li { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto auto;
        align-items:baseline; column-gap:.75rem; }
   li:has(.open) { cursor:pointer; }
   li:has(.open):hover { border-color:var(--dim); }
@@ -49,7 +37,6 @@
      from the first prompt is plainer, and "(untitled)" is plainly a placeholder. */
   .name.derived { font-weight:400; color:var(--soft); }
   .name.untitled { color:var(--dim); font-weight:400; font-style:italic; }
-  .meta { color:var(--dim); white-space:nowrap; font-size:.9em; }
   .dot { color:var(--dim); }
   .live .dot { color:var(--live); }
   .waiting .dot { color:var(--warn); }
@@ -60,22 +47,14 @@
   .sub .what { overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
                unicode-bidi:isolate; }
   .sub .where { margin-left:auto; flex:none; opacity:.75; unicode-bidi:isolate; }
-
-  /* Raised above the stretched link so the row's own click never reaches it. */
-  .del { position:relative; z-index:1; font:inherit; color:var(--dim);
-         background:transparent; cursor:pointer; border:1px solid transparent;
-         border-radius:6px; padding:.1rem .5rem; }
-  .del:hover { color:var(--danger); border-color:var(--danger); }
-  .del[disabled] { cursor:default; opacity:.35; }
-  .del[disabled]:hover { color:var(--dim); border-color:transparent; }
-
-  .note { color:var(--dim); padding:1.5rem 0; }
-  .note b { color:var(--text); font-weight:600; }
-  .error { color:var(--warn); }
 </style>
 </head>
 <body>
 <main>
+  <nav class="tabs">
+    <a href="/" aria-current="page">Sessions</a>
+    <a href="/memories">Memories</a>
+  </nav>
   <header>
     <h1>Agent Box sessions</h1>
     <span class="count" id="count"></span>

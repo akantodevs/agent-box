@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__PAGE_TITLE__</title>
+<link rel="stylesheet" href="/static/common.css">
+<style>
+  .summary { color:var(--dim); margin-bottom:1.25rem; }
+  .summary.warn { color:var(--warn); }
+  h2 { font-size:.95rem; font-weight:600; margin:1.5rem 0 .6rem; color:var(--soft); }
+  h2 .count { font-weight:400; }
+  li { display:grid; grid-template-columns:minmax(0,1fr) auto auto auto auto;
+       align-items:baseline; column-gap:.75rem; }
+  li.cutoff { border-left:2px solid var(--warn); }
+  li.orphaned { border-left:2px solid var(--danger); }
+
+  /* The name is a button so the row expands from the keyboard too. */
+  .toggle { font:inherit; font-weight:600; color:inherit; background:none;
+            border:0; padding:0; text-align:left; cursor:pointer; min-width:0;
+            overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+            unicode-bidi:isolate; }
+  .toggle:hover { color:var(--live); }
+  .toggle::before { content:"▸ "; color:var(--dim); }
+  .toggle[aria-expanded="true"]::before { content:"▾ "; }
+
+  .badge { font-size:.85em; white-space:nowrap; color:var(--dim); }
+  .badge.cutoff { color:var(--warn); }
+  .badge.orphaned { color:var(--danger); }
+  .sub { grid-column:1 / -1; margin-top:.3rem; display:flex; gap:.6rem;
+         color:var(--dim); font-size:.9em; min-width:0; }
+  .sub .what { overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+               unicode-bidi:isolate; }
+  .sub .where { margin-left:auto; flex:none; opacity:.75; unicode-bidi:isolate; }
+  pre { grid-column:1 / -1; margin:.7rem 0 0; padding:.7rem; overflow-x:auto;
+        background:var(--bg); border:1px solid var(--line); border-radius:6px;
+        white-space:pre-wrap; word-break:break-word; color:var(--soft); }
+  #dangling ul { margin-top:.4rem; }
+  #dangling li { display:block; color:var(--warn); }
+</style>
+</head>
+<body>
+<main>
+  <nav class="tabs">
+    <a href="/">Sessions</a>
+    <a href="/memories" aria-current="page">Memories</a>
+  </nav>
+  <header>
+    <h1>Agent Box memories</h1>
+  </header>
+  <p class="summary" id="summary"></p>
+  <div id="groups"></div>
+  <div class="note" id="dangling" hidden></div>
+  <p class="note" id="empty" hidden>No memories yet. Claude Code writes them as it learns about this box.</p>
+  <p class="note error" id="error" hidden>Cannot reach the session server &mdash; retrying.</p>
+</main>
+
+<script>
+  const REFRESH_MS = 5000;
+
+  // Claude Code's memory instructions define these four; anything else is
+  // reported as "other" by the server.
+  const GROUPS = [
+    ["user", "User"], ["feedback", "Feedback"], ["project", "Project"],
+    ["reference", "Reference"], ["other", "Other"],
+  ];
+  const STATUS = {
+    loaded: ["loaded", "Listed in MEMORY.md within the part every session loads"],
+    cutoff: ["cut off", "Listed in MEMORY.md past its load cap — sessions never see this pointer"],
+    orphaned: ["orphaned", "Not listed in MEMORY.md — nothing points a session at it"],
+  };
+  // The index is loaded into every session and cut off at its cap; warn while
+  // there is still room to clean up.
+  const INDEX_WARN = 0.8;
+
+  // Same rules as the sessions page: everything below builds HTML strings, so
+  // everything below is escaped, and control characters and bidi overrides are
+  // dropped outright.
+  const escapeHtml = (value) =>
+    String(value ?? "")
+      .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "")
+      .replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // A file body keeps its line structure: escape each line, keep the newlines.
+  const escapeText = (value) =>
+    String(value ?? "").replace(/\t/g, "    ").split("\n").map(escapeHtml).join("\n");
+
+  // Measured against the server's clock, as on the sessions page.
+  let clockSkew = 0;
+
+  const ago = (epoch) => {
+    if (!Number.isFinite(epoch)) return "";
+    const seconds = Math.max(0, Math.floor(Date.now() / 1000 + clockSkew - epoch));
+    for (const [suffix, size] of [["d", 86400], ["h", 3600], ["m", 60]]) {
+      if (seconds >= size) return `${Math.floor(seconds / size)}${suffix} ago`;
+    }
+    return "just now";
+  };
+
+  // Decimal kilobytes, because the index cap is a decimal 25,000 bytes.
+  const sizeLabel = (bytes) => {
+    if (!Number.isFinite(bytes) || bytes < 0) return "";
+    if (bytes < 1000) return `${bytes} B`;
+    return `${(bytes / 1000).toFixed(1).replace(/\.0$/, "")} KB`;
+  };
+
+  const summaryText = (t) => {
+    const parts = [
+      `${t.count} ${t.count === 1 ? "memory" : "memories"}`,
+      sizeLabel(t.bytes),
+      `index ${sizeLabel(t.indexBytes)} / ${sizeLabel(t.indexByteCap)}`,
+      `${t.indexLines} / ${t.indexLineCap} lines`,
+    ];
+    for (const [key, label] of [["cutoff", "cut off"], ["orphaned", "orphaned"], ["dangling", "dangling"]]) {
+      if (t[key] > 0) parts.push(`${t[key]} ${label}`);
+    }
+    return parts.join(" · ");
+  };
+
+  const indexPressure = (t) =>
+    Math.max(t.indexBytes / t.indexByteCap, t.indexLines / t.indexLineCap);
+
+  // id → fetched file text, or null while the fetch is in flight. Kept across
+  // polls so an open row stays open while the list refreshes underneath it.
+  const expanded = new Map();
+
+  // Ids being deleted. A second click while the request is in flight would
+  // POST again and answer 404, which reads as a failure of the first delete.
+  const deleting = new Set();
+
+  // data-* carries only the ASCII-safe encoded id; the handlers look the memory
+  // up again, so project, file and name never travel through an attribute.
+  const dataId = (m) => escapeHtml(encodeURIComponent(m.id));
+
+  const rowHtml = (m, showProject) => {
+    const [label, hint] = STATUS[m.status] || [m.status, ""];
+    const open = expanded.has(m.id);
+    const content = expanded.get(m.id);
+    const busy = deleting.has(m.id) ? "disabled" : "";
+    const where = showProject
+      ? `<span class="where">${escapeHtml(m.project)}</span>`
+      : "";
+    return `<li class="memory ${escapeHtml(m.status)}">
+      <button class="toggle" data-id="${dataId(m)}" aria-expanded="${open}" title="${escapeHtml(m.file)}">${escapeHtml(m.name)}</button>
+      <span class="badge ${escapeHtml(m.status)}" title="${escapeHtml(hint)}">${escapeHtml(label)}</span>
+      <span class="meta">${escapeHtml(sizeLabel(m.bytes))}</span>
+      <span class="meta">${escapeHtml(ago(m.modified))}</span>
+      <button class="del" data-id="${dataId(m)}" ${busy}>delete</button>
+      <div class="sub"><span class="what">${escapeHtml(m.description)}</span>${where}</div>
+      ${open ? `<pre>${content == null ? "loading…" : escapeText(content)}</pre>` : ""}
+    </li>`;
+  };
+
+  const memoryFor = (encodedId) => {
+    let id;
+    try { id = decodeURIComponent(encodedId); } catch (error) { return null; }
+    return (lastPayload?.memories || []).find((m) => m.id === id) || null;
+  };
+
+  let lastPayload = null;
+  let lastHtml = null;
+  let lastDanglingHtml = null;
+
+  // Render-diffed like the sessions page, so a poll never drops focus or
+  // collapses a hover the operator is in the middle of.
+  const render = () => {
+    if (!lastPayload) return;
+    const memories = Array.isArray(lastPayload.memories) ? lastPayload.memories : [];
+    const ids = new Set(memories.map((m) => m.id));
+    for (const id of [...expanded.keys()]) if (!ids.has(id)) expanded.delete(id);
+
+    const dangling = Array.isArray(lastPayload.dangling) ? lastPayload.dangling : [];
+    // As on the sessions page, the project is only worth a column when there is
+    // more than one to tell apart.
+    const showProject = new Set([...memories, ...dangling].map((x) => x.project)).size > 1;
+
+    const html = GROUPS.map(([type, title]) => {
+      const rows = memories.filter((m) => m.type === type);
+      if (!rows.length) return "";
+      return `<section><h2>${title} <span class="count">${rows.length}</span></h2>
+        <ul>${rows.map((m) => rowHtml(m, showProject)).join("")}</ul></section>`;
+    }).join("");
+    if (html !== lastHtml) {
+      const groups = document.getElementById("groups");
+      // Rewriting the DOM destroys the focused toggle; remember which one it
+      // was so keyboard users are not dropped back to the top of the page.
+      const active = document.activeElement;
+      const focused = active && active.closest ? active.closest("button.toggle") : null;
+      const focusedId = focused ? focused.dataset.id : null;
+      groups.innerHTML = html;
+      lastHtml = html;
+      if (focusedId != null) {
+        for (const button of groups.querySelectorAll("button.toggle")) {
+          if (button.dataset.id === focusedId) { button.focus(); break; }
+        }
+      }
+    }
+
+    const totals = lastPayload.totals || {};
+    const summary = document.getElementById("summary");
+    summary.textContent = summaryText(totals);
+    summary.className = indexPressure(totals) > INDEX_WARN ? "summary warn" : "summary";
+
+    const note = document.getElementById("dangling");
+    note.hidden = dangling.length === 0;
+    const danglingHtml = dangling.length
+      ? `MEMORY.md lines pointing at files that no longer exist:<ul>${dangling.map((d) =>
+          `<li>${showProject ? escapeHtml(d.project) + "/" : ""}${escapeHtml(d.file)} line ${escapeHtml(d.line)}: ${escapeHtml(d.text)}</li>`).join("")}</ul>`
+      : "";
+    // Diffed like the groups, so a text selection survives the poll.
+    if (danglingHtml !== lastDanglingHtml) {
+      note.innerHTML = danglingHtml;
+      lastDanglingHtml = danglingHtml;
+    }
+
+    document.getElementById("empty").hidden = memories.length > 0;
+  };
+
+  const refresh = async () => {
+    try {
+      const response = await fetch("/api/memories", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      if (Number.isFinite(payload.generatedAt)) {
+        clockSkew = payload.generatedAt - Date.now() / 1000;
+      }
+      lastPayload = payload;
+      render();
+      document.getElementById("error").hidden = true;
+    } catch (error) {
+      document.getElementById("error").hidden = false;
+    }
+  };
+
+  const memoryUrl = (project, file) =>
+    `/api/memories/${encodeURIComponent(project)}/${encodeURIComponent(file)}`;
+
+  const toggle = async (encodedId) => {
+    const memory = memoryFor(encodedId);
+    if (!memory) return;
+    const id = memory.id;
+    if (expanded.has(id)) {
+      expanded.delete(id);
+      render();
+      return;
+    }
+    expanded.set(id, null);
+    render();
+    let text;
+    try {
+      const response = await fetch(memoryUrl(memory.project, memory.file), { cache: "no-store" });
+      text = response.ok ? await response.text() : `(could not load: ${(await response.text()).trim()})`;
+    } catch (error) {
+      text = `(could not load: ${error})`;
+    }
+    if (expanded.has(id)) {
+      expanded.set(id, text);
+      render();
+    }
+  };
+
+  const tick = async () => {
+    if (!document.hidden) await refresh();
+    setTimeout(tick, REFRESH_MS);
+  };
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refresh();
+  });
+
+  document.getElementById("groups").addEventListener("click", async (event) => {
+    const opener = event.target.closest("button.toggle");
+    if (opener) return toggle(opener.dataset.id);
+    const button = event.target.closest("button.del");
+    if (!button || button.disabled) return;
+    const memory = memoryFor(button.dataset.id);
+    if (!memory || deleting.has(memory.id)) return;
+    if (!confirm(`Delete "${memory.name}"? Its MEMORY.md line is removed too. This cannot be undone.`)) return;
+    deleting.add(memory.id);
+    button.disabled = true;
+    try {
+      const response = await fetch(`${memoryUrl(memory.project, memory.file)}/delete`, { method: "POST" });
+      if (!response.ok) alert(`Delete failed: ${(await response.text()).trim()}`);
+    } catch (error) {
+      alert(`Delete failed: ${error}`);
+    } finally {
+      deleting.delete(memory.id);
+      button.disabled = false;
+    }
+    refresh();
+  });
+
+  tick();
+</script>
+</body>
+</html>

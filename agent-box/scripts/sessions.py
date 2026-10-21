@@ -2,9 +2,10 @@
 """Session administration page for agent-box.
 
 Lists the Claude Code sessions in the mounted state volume and hands each one to
-the ttyd terminal on its own port. Standard library only; runs as the `claude`
-user, because it only ever touches ~/.claude and root-owned files there would
-break Claude Code itself.
+the ttyd terminal on its own port, and lists the auto-memory files beside them
+for review and cleanup. Standard library only; runs as the `claude` user,
+because it only ever touches ~/.claude and root-owned files there would break
+Claude Code itself.
 """
 
 import base64
@@ -15,7 +16,9 @@ import logging
 import os
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import unquote
 
+import memory_store
 from session_store import DeleteError, SessionStore, delete_session
 
 
@@ -25,6 +28,8 @@ class Handler(BaseHTTPRequestHandler):
     # Configured on the class before the server starts serving.
     store = None
     page = ""
+    memories_page = ""
+    stylesheet = ""
     credential = ("", "")
 
     def do_GET(self):
@@ -34,6 +39,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._challenge()
         if self.path == "/":
             return self._send(200, self.page.encode("utf-8"), "text/html; charset=utf-8")
+        if self.path == "/memories":
+            return self._send(200, self.memories_page.encode("utf-8"), "text/html; charset=utf-8")
+        if self.path == "/static/common.css":
+            return self._send(200, self.stylesheet.encode("utf-8"), "text/css; charset=utf-8")
         if self.path == "/api/sessions":
             # allow_nan=False: json.dumps otherwise emits bare NaN/Infinity,
             # which are not JSON. One of them anywhere in the document makes the
@@ -45,6 +54,18 @@ class Handler(BaseHTTPRequestHandler):
                 allow_nan=False,
             ).encode("utf-8")
             return self._send(200, body, "application/json")
+        if self.path == "/api/memories":
+            listing = memory_store.list_memories(self.store.claude_home)
+            listing["generatedAt"] = int(time.time())
+            body = json.dumps(listing, allow_nan=False).encode("utf-8")
+            return self._send(200, body, "application/json")
+        parts = self._memory_route()
+        if parts and len(parts) == 2:
+            try:
+                text = memory_store.read_memory(self.store.claude_home, *parts)
+            except memory_store.MemoryStoreError as error:
+                return self._memory_refusal("read", parts, error)
+            return self._send(200, text.encode("utf-8"), "text/plain; charset=utf-8")
         return self._send(404, b"not found\n", "text/plain")
 
     def do_POST(self):
@@ -71,7 +92,39 @@ class Handler(BaseHTTPRequestHandler):
             # unlinked so nothing has to be recomputed to make the call.
             self.store.forget(path)
             return self._send(204, b"", "text/plain")
+        parts = self._memory_route()
+        if parts and len(parts) == 3 and parts[2] == "delete":
+            try:
+                memory_store.delete_memory(self.store.claude_home, parts[0], parts[1])
+            except memory_store.MemoryStoreError as error:
+                return self._memory_refusal("delete", parts[:2], error)
+            return self._send(204, b"", "text/plain")
         return self._send(404, b"not found\n", "text/plain")
+
+    def _memory_route(self):
+        """The decoded components after /api/memories/, or None.
+
+        Split first, decode second: an encoded slash then stays inside its
+        component, where memory_store refuses it, instead of becoming a new
+        path segment.
+        """
+        parts = self.path.strip("/").split("/")
+        if len(parts) < 3 or parts[0] != "api" or parts[1] != "memories":
+            return None
+        return [unquote(part) for part in parts[2:]]
+
+    def _memory_refusal(self, action, parts, error):
+        if error.status == 500:
+            # Same reasoning as the session delete: the message holds the
+            # absolute path and the OSError, which belong in the log only.
+            logging.getLogger(__name__).error(
+                "memory %s %s failed: %s", action, "/".join(parts), error
+            )
+            # A partial delete carries its own path-free sentence, because
+            # "could not delete" would be untrue once the file is gone.
+            text = error.public or "could not %s the memory" % action
+            return self._send(500, ("%s\n" % text).encode("utf-8"), "text/plain")
+        return self._send(error.status, ("%s\n" % error).encode("utf-8"), "text/plain")
 
     def _authorized(self):
         user, password = self.credential
@@ -116,8 +169,9 @@ class Handler(BaseHTTPRequestHandler):
         pass  # the container log is for the terminal, not for every poll
 
 
-# What the browser tab is called when the deployment has no name of its own.
-DEFAULT_PAGE_TITLE = "Agent Box sessions"
+# What the browser tab is called when the deployment has no name of its own;
+# %s is the page's section, lower-cased ("Agent Box sessions").
+DEFAULT_PAGE_TITLE = "Agent Box %s"
 
 # The port this server listens on inside the container, and the host port it
 # tells the page the agent tabs are published on. They are separate numbers for
@@ -140,8 +194,8 @@ DEFAULT_TABS_PUBLIC_PORT = 8091
 _TITLE_LIMIT = 60
 
 
-def page_title(agent_name):
-    """The browser tab's name for this box's session list.
+def page_title(agent_name, section="Sessions"):
+    """The browser tab's name for one of this box's admin pages.
 
     The name is AGENT_NAME, which ep.sh resolves once at boot (see
     agent_name.sh): the operator's own setting, else the container's name, else
@@ -151,12 +205,12 @@ def page_title(agent_name):
     """
     name = " ".join(agent_name.split()) if isinstance(agent_name, str) else ""
     if not name:
-        return DEFAULT_PAGE_TITLE
-    return "Sessions: %s" % name[:_TITLE_LIMIT]
+        return DEFAULT_PAGE_TITLE % section.lower()
+    return "%s: %s" % (section, name[:_TITLE_LIMIT])
 
 
-def build_page(template_path, agent_tabs_public_port, agent_name=""):
-    """Load the UI, baking in what the container cannot discover for itself.
+def build_page(template_path, agent_tabs_public_port, agent_name="", section="Sessions"):
+    """Load a UI page, baking in what the container cannot discover for itself.
 
     The published port is one such thing — docker publishes it on the host side
     and nothing inside can see it — and the box's own name is the other.
@@ -165,7 +219,7 @@ def build_page(template_path, agent_tabs_public_port, agent_name=""):
         page = handle.read()
     return page.replace(
         "__AGENT_TABS_PUBLIC_PORT__", str(agent_tabs_public_port)
-    ).replace("__PAGE_TITLE__", html.escape(page_title(agent_name)))
+    ).replace("__PAGE_TITLE__", html.escape(page_title(agent_name, section)))
 
 
 def configure_logging():
@@ -195,6 +249,14 @@ def main():
         os.environ.get("AGENT_TABS_PUBLIC_PORT") or DEFAULT_TABS_PUBLIC_PORT,
         os.environ.get("AGENT_NAME", ""),
     )
+    Handler.memories_page = build_page(
+        os.path.join(here, "memories_page.html"),
+        os.environ.get("AGENT_TABS_PUBLIC_PORT") or DEFAULT_TABS_PUBLIC_PORT,
+        os.environ.get("AGENT_NAME", ""),
+        section="Memories",
+    )
+    with open(os.path.join(here, "common.css"), encoding="utf-8") as handle:
+        Handler.stylesheet = handle.read()
     Handler.credential = (
         os.environ.get("TTYD_USER", ""),
         os.environ.get("TTYD_PASSWORD", ""),
