@@ -24,7 +24,7 @@ INSTALL = os.path.join(SCRIPTS_DIR, "install_plugins.sh")
 
 MARKET = "claude-plugins-official"
 SUPERPOWERS = "superpowers@" + MARKET
-PLAYWRIGHT = "playwright@" + MARKET
+FRONTEND = "frontend-design@" + MARKET
 
 # A fake CLI with just enough of `claude plugin ...` for the script: state in
 # $FAKE_STATE, one JSON line per invocation appended to $FAKE_LOG. Messages and
@@ -96,7 +96,7 @@ class InstallPluginsTestCase(unittest.TestCase):
         self.state_file = os.path.join(self.dir, "state.json")
         self.log_file = os.path.join(self.dir, "calls.log")
         self.plugins_file = os.path.join(self.dir, "plugins.txt")
-        self.write_plugins(SUPERPOWERS, PLAYWRIGHT)
+        self.write_plugins(SUPERPOWERS, FRONTEND)
         self.set_state(plugins=[], markets=[])
 
     # --- helpers -------------------------------------------------------
@@ -147,25 +147,25 @@ class InstallPluginsTestCase(unittest.TestCase):
 
 class SteadyStateTest(InstallPluginsTestCase):
     def test_a_box_with_everything_in_place_calls_the_cli_once(self):
-        self.set_state(self.installed(SUPERPOWERS, PLAYWRIGHT), [MARKET])
+        self.set_state(self.installed(SUPERPOWERS, FRONTEND), [MARKET])
         self.run_install()
         self.assertEqual([["plugin", "list", "--json"]], self.calls())
 
     def test_steady_state_still_reports_each_plugin(self):
-        self.set_state(self.installed(SUPERPOWERS, PLAYWRIGHT), [MARKET])
+        self.set_state(self.installed(SUPERPOWERS, FRONTEND), [MARKET])
         out = self.run_install().stdout
         self.assertIn(SUPERPOWERS + " already installed", out)
-        self.assertIn(PLAYWRIGHT + " enabled", out)
+        self.assertIn(FRONTEND + " enabled", out)
 
 
 class EnableTest(InstallPluginsTestCase):
     def test_an_installed_but_disabled_plugin_is_enabled(self):
         self.set_state(
-            self.installed(SUPERPOWERS) + self.installed(PLAYWRIGHT, enabled=False),
+            self.installed(SUPERPOWERS) + self.installed(FRONTEND, enabled=False),
             [MARKET],
         )
         self.run_install()
-        self.assertEqual([["plugin", "enable", PLAYWRIGHT]], self.mutating_calls())
+        self.assertEqual([["plugin", "enable", FRONTEND]], self.mutating_calls())
         self.assertTrue(all(p["enabled"] for p in self.state()["plugins"]))
 
 
@@ -173,7 +173,7 @@ class InstallTest(InstallPluginsTestCase):
     def test_a_missing_plugin_is_installed_from_a_known_marketplace(self):
         self.set_state(self.installed(SUPERPOWERS), [MARKET])
         self.run_install()
-        self.assertEqual([["plugin", "install", PLAYWRIGHT]], self.mutating_calls())
+        self.assertEqual([["plugin", "install", FRONTEND]], self.mutating_calls())
 
     def test_a_fresh_volume_adds_the_marketplace_once_then_installs(self):
         self.run_install()
@@ -181,12 +181,12 @@ class InstallTest(InstallPluginsTestCase):
             [
                 ["plugin", "marketplace", "add", "anthropics/" + MARKET],
                 ["plugin", "install", SUPERPOWERS],
-                ["plugin", "install", PLAYWRIGHT],
+                ["plugin", "install", FRONTEND],
             ],
             self.mutating_calls(),
         )
         self.assertEqual(
-            {SUPERPOWERS: True, PLAYWRIGHT: True},
+            {SUPERPOWERS: True, FRONTEND: True},
             {p["id"]: p["enabled"] for p in self.state()["plugins"]},
         )
 
@@ -214,28 +214,6 @@ class InstallTest(InstallPluginsTestCase):
         self.write_plugins(SUPERPOWERS)
         self.run_install()
         self.assertIn(["plugin", "install", SUPERPOWERS], self.mutating_calls())
-
-
-class DisablePlaywrightTest(InstallPluginsTestCase):
-    def test_an_enabled_playwright_is_disabled(self):
-        self.set_state(self.installed(SUPERPOWERS, PLAYWRIGHT), [MARKET])
-        self.run_install(DISABLE_PLAYWRIGHT="true")
-        self.assertEqual([["plugin", "disable", PLAYWRIGHT]], self.mutating_calls())
-
-    def test_an_already_disabled_playwright_costs_no_call(self):
-        self.set_state(
-            self.installed(SUPERPOWERS) + self.installed(PLAYWRIGHT, enabled=False),
-            [MARKET],
-        )
-        out = self.run_install(DISABLE_PLAYWRIGHT="yes").stdout
-        self.assertEqual([], self.mutating_calls())
-        self.assertIn(PLAYWRIGHT + " disabled", out)
-
-    def test_a_missing_playwright_is_not_installed(self):
-        self.set_state(self.installed(SUPERPOWERS), [MARKET])
-        out = self.run_install(DISABLE_PLAYWRIGHT="1").stdout
-        self.assertEqual([], self.mutating_calls())
-        self.assertIn("skipping " + PLAYWRIGHT, out)
 
 
 if __name__ == "__main__":

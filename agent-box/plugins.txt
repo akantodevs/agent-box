@@ -1,3 +1,2 @@
 superpowers@claude-plugins-official
-playwright@claude-plugins-official
 frontend-design@claude-plugins-official

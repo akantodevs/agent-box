@@ -98,22 +98,24 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 # Create non-root user for Claude Code
 RUN useradd -m -s /bin/bash claude
 
-# Playwright MCP server + headless Chromium (used by the playwright plugin in
-# plugins.txt). Browsers go to a fixed shared path: the default is per-user
-# (~/.cache/ms-playwright), but this install runs as root while the MCP runs
-# as `claude`. Chromium is installed through the MCP's own bundled playwright
-# so the browser revision matches exactly what the server expects. The MCP
-# itself defaults to the Chrome channel, which is not installed, so
-# start_claude.sh points it at this Chromium (PLAYWRIGHT_MCP_BROWSER).
-# The chown lets the agent self-install a newer revision at runtime if a
-# newer @playwright/mcp (fetched by the plugin's `npx @playwright/mcp@latest`)
-# ever demands one.
+# Playwright MCP server + headless Chromium, pinned together: one version
+# moves both. Chromium is installed through the MCP's own bundled playwright,
+# so the browser revision is exactly the one this server expects. Sessions use
+# this binary, not the playwright plugin's `npx @playwright/mcp@latest` — that
+# follows every upstream release and then wants a Chromium revision the image
+# does not have; setup_playwright_mcp.sh registers /usr/bin/playwright-mcp as
+# the "playwright" MCP server at boot and keeps the plugin off. Bump the ARG
+# (and rebuild) to update. Browsers go to a fixed shared path: the default is
+# per-user (~/.cache/ms-playwright), but this install runs as root while the
+# MCP runs as `claude`. The MCP defaults to the Chrome channel, which is not
+# installed, so start_claude.sh points it at this Chromium (PLAYWRIGHT_MCP_BROWSER).
+ARG PLAYWRIGHT_MCP_VERSION=0.0.85
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN npm install -g @playwright/mcp \
+RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
     && cd /usr/lib/node_modules/@playwright/mcp \
     && npx playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/* \
-    && chown -R claude:claude /ms-playwright
+    && test -x /usr/bin/playwright-mcp
 
 COPY ep.sh /ep.sh
 RUN chmod +x /ep.sh

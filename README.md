@@ -85,12 +85,16 @@ For the full story (building locally, configuration, how it works), read on.
 - **Configurable model** — set the `CLAUDE_MODEL` env var (defaults to `opus`) to pick
   the model Claude Code launches with.
 - **Plugins preinstalled** — anything listed in `agent-box/plugins.txt` (default:
-  `superpowers`, `playwright`, and `frontend-design`) is installed _and enabled_
-  idempotently on every start.
+  `superpowers` and `frontend-design`) is installed _and enabled_ idempotently on
+  every start.
 - **Browser automation built in** — the [Playwright MCP](https://github.com/microsoft/playwright-mcp)
-  server and a matching headless Chromium are baked into the image, so the agent can
-  drive web pages (navigate, click, fill forms, screenshot) to verify the UIs it
-  builds.
+  server and a matching headless Chromium are baked into the image, pinned together by
+  the `PLAYWRIGHT_MCP_VERSION` build arg, so the agent can drive web pages (navigate,
+  click, fill forms, screenshot) to verify the UIs it builds. Every start registers the
+  baked `/usr/bin/playwright-mcp` as the user-scope MCP server `playwright` (tools
+  `mcp__playwright__browser_*`) and keeps the `playwright@claude-plugins-official`
+  plugin disabled: its `npx @playwright/mcp@latest` follows every upstream release and
+  then asks for a Chromium revision the image does not have.
 - **Git & GitHub ready** — `git` and the GitHub CLI (`gh`) are installed; give the box
   a `GH_TOKEN` and both are authenticated. Whether the agent may commit, push and open
   PRs is up to you (`ALLOW_GIT_WRITE`, off by default) — see [GitHub access](#github-access).
@@ -365,7 +369,7 @@ All knobs are environment variables on the `agent` service in `docker-compose.ym
 | `AGENT_TABS_PUBLIC_PORT`      | `8091`             | The **host** port the agent tabs are published on (the left half of its `ports:` mapping; this repo's own compose file uses `8096`). The container can't discover this itself, and the session list needs it to build its links — so it must match the `ports:` entry, or every link on the page points at the wrong port. Change it and the `ports:` entry together. |
 | `SESSION_LIST_PUBLIC_PORT`    | `8090`             | The host port the session list is published on (the left half of its `ports:` mapping; this repo's own compose file uses `8095`). Only used for the "Container ready" line in the container log; the page itself works regardless.                                                                                                                                                                                                                   |
 | `CLAUDE_MODEL`                | `opus`             | Model passed to `claude --model` at launch. Accepts an alias (`opus`, `sonnet`, `fable`, ...) or a full model id.                                                                                                                                                                                                                                                                                       |
-| `DISABLE_PLAYWRIGHT`          | unset              | Set to `"true"` to disable the Playwright browser-automation plugin — useful when running agent-box for something other than web development. Clearing it re-enables the plugin on the next start.                                                                                                                                                                                                      |
+| `DISABLE_PLAYWRIGHT`          | unset              | Set to `"true"` to leave the Playwright browser-automation MCP server unregistered — useful when running agent-box for something other than web development. Clearing it registers the server again on the next start.                                                                                                                                                                                                      |
 | `STARTUP_AUTO_UPDATE`         | `No`               | Whether to update the Claude Code CLI to the newest published version on every container start, before any session is launched. Only `Yes` (any case) enables it; unset or anything else keeps the version baked into the image. Off by default: it adds a sizeable download to every start and lets a running box drift from its image tag. The in-session auto-updater stays off either way — every session in the box shares one install, so startup is the only moment it can be replaced safely. A failed update is logged and the box starts on the image's version. |
 | `ALLOW_TERRAFORM_MODIFY`      | `Ask`<sup>\*</sup> | Whether the agent may run infrastructure-mutating Terraform (`apply`, `destroy`, `import`, `state rm`/`mv`, `taint`, ...). `No` blocks, `Ask` prompts once per terraform directory then remembers it, `Yes` runs freely. Read-only commands always run. <sup>\*</sup>Shipped as `Ask` in `docker-compose.yml`; if unset/unrecognized the guard fails **closed** (blocks).                               |
 | `REMOTE_CONTROL_NAME`         | unset              | When set, Claude Code launches with `--remote-control <name>-<suffix>`, enabling Remote Control and naming the session. Set the **base** name; each session appends its own suffix (its slugified title, or the head of its id) so concurrent sessions stay distinguishable. Leave unset to keep Remote Control off (the default).                                                                      |

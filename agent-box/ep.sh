@@ -207,17 +207,27 @@ STARTUP_AUTO_UPDATE="${STARTUP_AUTO_UPDATE:-}" \
     || echo "WARN: startup CLI update step failed to run"
 
 # Install Claude Code plugins listed in plugins.txt (idempotent; runs as claude).
-# Both values are passed explicitly because `su -` is a login shell and strips
-# the inherited environment; they travel as command-prefix assignments carried
+# Values are passed explicitly because `su -` is a login shell and strips the
+# inherited environment; they travel as command-prefix assignments carried
 # through the login by su's -w whitelist rather than pasted into the -c string,
-# so an apostrophe in an operator-set DISABLE_PLAYWRIGHT cannot end the quoting
-# and run the rest as root. (Same reasoning as the sessions.py launch below.)
+# so an apostrophe in an operator-set value (DISABLE_PLAYWRIGHT below) cannot
+# end the quoting and run the rest as root. (Same reasoning as the sessions.py
+# launch below.)
 echo "Installing plugins from /opt/agent-box/plugins.txt..."
 PLUGINS_FILE=/opt/agent-box/plugins.txt \
-DISABLE_PLAYWRIGHT="${DISABLE_PLAYWRIGHT:-}" \
-su -w PLUGINS_FILE,DISABLE_PLAYWRIGHT \
+su -w PLUGINS_FILE \
     - claude -c 'exec /opt/agent-box/scripts/install_plugins.sh' \
     || echo "WARN: plugin install reported problems (see output above)"
+
+# Register the image's pinned Playwright MCP server (/usr/bin/playwright-mcp)
+# as the user-scope "playwright" server and keep the playwright plugin, whose
+# `npx @playwright/mcp@latest` outruns the baked Chromium, switched off. Every
+# boot: ~/.claude.json is reseeded on a container recreate. Runs after the
+# plugin install so nothing there can re-enable the plugin behind it.
+DISABLE_PLAYWRIGHT="${DISABLE_PLAYWRIGHT:-}" \
+su -w DISABLE_PLAYWRIGHT \
+    - claude -c 'exec /opt/agent-box/scripts/setup_playwright_mcp.sh' \
+    || echo "WARN: Playwright MCP setup failed to run"
 
 echo "Starting Claude Code via ttyd..."
 
